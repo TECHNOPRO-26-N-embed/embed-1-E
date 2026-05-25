@@ -1,6 +1,7 @@
 # 詳細設計書 — 組込み開発実習
 
 <!-- 作成者: あなたの名前 / 日付: YYYY-MM-DD / グループ: 〇-〇 -->
+作成者: 呉建廷 / 日付: 2026-05-25 / グループ: 1-E
 
 > **このドキュメントの目的**
 > 基本設計書（basic_design.md）で「**どのような構造で作るか**」を決めました。
@@ -19,10 +20,10 @@
 
 | 項目 | basic_design.md から転記 |
 |:--|:--|
-| 作品タイトル | |
-| 状態の種類（1-2 状態遷移から） | |
-| 実装する関数の数（2-2 関数一覧から） | 　個 |
-| グローバル変数の合計バイト数（2-1 SRAM確認から） | 　B |
+| 作品タイトル | 水分補給リマインダー |
+| 状態の種類（1-2 状態遷移から） | 0:待機中, 1:リマインド中, 2:警告中 |
+| 実装する関数の数（2-2 関数一覧から） | 7個 |
+| グローバル変数の合計バイト数（2-1 SRAM確認から） | 43B |
 
 ---
 
@@ -33,24 +34,47 @@
 
 ```
 【ピン定義】（basic_design.md 3-1 から転記）
-  PIN_BUTTON    = 2    // タクトスイッチ（INPUT_PULLUP）
-  PIN_LED_RED   = 9    // 赤LED
-  PIN_LED_GREEN = 10   // 緑LED
-  PIN_BUZZER    = 11   // パッシブブザー
+  PIN_BUTTON      : const int = 2    // タクトスイッチ（INPUT_PULLUP）
+  PIN_LED_GREEN   : const int = 9    // 緑LED（電源ON表示）
+  PIN_LED_YELLOW  : const int = 10   // 黄色LED（リマインド/警告/フィードバック表示）
+  PIN_BUZZER      : const int = 12   // アクティブブザー
 
 【状態管理】（basic_design.md 1-2 の状態名から転記）
-  currentState  : int = 0   // 0:待機 1:動作中 2:完了 3:エラー
+  currentState  : int = 0   // 0:待機中 1:リマインド中 2:警告中
+
+【状態ID定数】
+  STATE_IDLE      : const int = 0
+  STATE_REMIND    : const int = 1
+  STATE_WARNING   : const int = 2
 
 【タイマー（millis()用）】（basic_design.md 2-3 から転記）
-  lastMillis_LED    : unsigned long = 0
-  lastMillis_Sensor : unsigned long = 0
+  lastRemindMillis      : unsigned long = 0   // 最後にリマインド時刻を更新した時刻
+  warningStartMillis    : unsigned long = 0   // リマインド開始時刻（30秒経過判定基準）
+  lastAlertMillis       : unsigned long = 0   // 最後にブザーを鳴らした時刻
+  lastButtonMillis      : unsigned long = 0   // デバウンス確定時刻
+  feedbackStartMillis   : unsigned long = 0   // 黄色LEDフィードバック開始時刻
+  buttonPressStartMillis: unsigned long = 0   // 長押し開始時刻
 
-【センサー・入力値】（basic_design.md 2-1 から転記）
-  sensorValue   : int  = 0
-  buttonState   : bool = false
+【時間定数（ms）】
+  remindInterval       : unsigned long = 1800000   // リマインド通知までの待機時間（初期値30分）
+  warningDelay         : const unsigned long = 30000   // リマインド開始後、警告状態へ移行するまでの猶予時間
+  alertRepeatInterval  : unsigned long = 30000   // 警告中にブザーを再鳴動する間隔
+  feedbackDuration     : const unsigned long = 1000   // 待機中ボタン押下時の黄色LEDフィードバック表示時間
+  debounceDelay        : const unsigned long = 50   // ボタンのチャタリングを無効化する判定時間
+  longPressThreshold   : const unsigned long = 2000   // 長押しとして扱う最小押下時間
+
+【入力状態】
+  buttonState          : bool = false   // 現在の確定状態（押下=true）
+  prevButtonReading    : bool = false   // 前回読取値
+  isLongPressHandled   : bool = false   // 同一長押しの重複処理防止
+
+【フィードバック・通知状態】
+  isFeedbackActive     : bool = false   // 待機中ボタン押下の黄色LED点滅中か
+  currentPattern       : int = 0        // 通知パターン番号（0:標準）
+  intervalModeIndex    : int = 0        // 0:30分 1:45分 2:60分
 
 【その他のフラグ・カウンター】
-  （自分のものを追加）
+  buzzerPulseCount     : int = 0        // 開始時2回鳴動の回数管理
 ```
 
 ---
@@ -81,11 +105,61 @@
 ```
 
 **↓ 自分の setup() を設計してください**
-```
+
 【処理の流れ】
-1.
-2.
-3.
+```
+1. ピンモードを設定する
+  - pinMode(PIN_BUTTON, INPUT_PULLUP)
+  - pinMode(PIN_LED_GREEN, OUTPUT)
+  - pinMode(PIN_LED_YELLOW, OUTPUT)
+  - pinMode(PIN_BUZZER, OUTPUT)
+
+  // 各部品の入出力方向を最初に確定し、誤動作を防ぐ
+```
+```
+2. 出力の初期状態を安全側にそろえる
+  - digitalWrite(PIN_LED_GREEN, LOW)
+  - digitalWrite(PIN_LED_YELLOW, LOW)
+  - digitalWrite(PIN_BUZZER, LOW)
+
+  // 起動直後にLEDやブザーが意図せず動かないよう、いったん全OFFにする
+```
+```
+3. 状態管理・タイマー変数を初期化する
+  - currentState = STATE_IDLE
+  - lastRemindMillis = millis()
+  - warningStartMillis = 0
+  - lastAlertMillis = 0
+  - lastButtonMillis = 0
+  - feedbackStartMillis = 0
+  - buttonPressStartMillis = 0
+  - isFeedbackActive = false
+  - isLongPressHandled = false
+  - buzzerPulseCount = 0
+
+  // 状態遷移と時間判定の基準値を初期化し、起動時の判定ズレを防ぐ
+```
+```
+4. 運用パラメータを初期値に設定する
+  - remindInterval = 1800000（30分）
+  - alertRepeatInterval = 30000（30秒）
+  - intervalModeIndex = 0
+  - currentPattern = 0
+
+  // リマインド間隔・通知間隔・モード番号を既定値にそろえる
+```
+```
+5. 電源ON状態を表示する
+  - digitalWrite(PIN_LED_GREEN, HIGH)
+  - digitalWrite(PIN_LED_YELLOW, LOW)
+
+  // 緑LED常時点灯で動作中デバイスであることを示し、黄色LEDは待機表示で消灯
+```
+```
+6. デバッグ用シリアルを開始する（任意）
+  - Serial.begin(9600)
+  
+  // 状態や時刻のログ確認を可能にしてデバッグをしやすくする
 ```
 
 ---
@@ -118,22 +192,52 @@
 ```
 
 **↓ 自分の loop() を設計してください**
-```
+
 【処理の流れ】
-
+```
 ＜毎ループ実行すること＞
+  - now = millis() を取得する
+  - pressed = readButton() で押下イベントを取得する
+  - resetByButton(pressed) を呼び、押下時は待機状態へ戻す
+  - updateStatusLeds(currentState) を呼び、現在状態に応じたLED表示を更新する
 
-
-＜currentState が 　　 のとき＞
-
-
-＜currentState が 　　 のとき＞
-
-
-＜currentState が 　　 のとき＞
-
+  // 長押しによる任意機能
+  - 長押しが確定した場合は changeRemindInterval() を呼び出す
+  - 別の長押し条件を満たした場合は changeAlertPattern() を呼び出す
+```
+```
+＜currentState が STATE_IDLE（待機中）のとき＞
+  - 緑LEDは点灯維持、黄色LEDは消灯（フィードバック中のみ点滅）
+  - checkRemindTimer() を呼び、remindInterval の経過を判定する
+  - remindInterval を経過したら
+    - currentState = STATE_REMIND
+    - warningStartMillis = now
+    - lastAlertMillis = 0
+    - buzzerPulseCount = 0
+  - isFeedbackActive が true かつ now - feedbackStartMillis >= feedbackDuration の場合
+    - isFeedbackActive = false にして黄色LED点滅を終了する
+```
+```
+＜currentState が STATE_REMIND（リマインド中）のとき＞
+  - 黄色LEDを点灯して水分補給を促す
+  - checkWarningTimeout() を呼び、warningDelay（30秒）無反応かを判定する
+  - 30秒無反応の場合
+    - currentState = STATE_WARNING
+    - lastAlertMillis = now
+    - buzzerPulseCount = 0
+  - ボタン押下時は resetByButton(pressed) 側で待機状態へ戻る
+```
+```
+＜currentState が STATE_WARNING（警告中）のとき＞
+  - 黄色LED点灯を維持する
+  - 警告開始直後にブザーを2回鳴らす（buzzerPulseCount で回数管理）
+  - その後は now - lastAlertMillis >= alertRepeatInterval のたびに再鳴動する
+  - ボタン押下時は警告を解除し、待機状態へ戻る（resetByButton）
 ```
 
+＜補足＞
+  - どの状態でもボタン押下で待機状態へ戻れる構造にする
+  - すべての時間判定は millis() 差分で行い、delay() は使わない
 ---
 
 ### （関数ごとに以下のブロックをコピーして追加してください）
@@ -142,22 +246,169 @@
 
 ---
 
-### `関数名()` — （役割を1行で書く）
+### `readButton()` — チャタリングを除去して押下イベントを判定する
 
-**basic_design.md 2-2 との対応：** （基本設計書の関数一覧の説明を転記）
+**basic_design.md 2-2 との対応：** C01（共通）ボタン読出
 
-**引数：** `引数名`（型）: 何の値か
+**引数：** なし
 
-**戻り値：** 型（なしの場合は void）
+**戻り値：** bool（このループで新規押下が確定したら true）
 
 ```
 【処理の流れ】
-1.
-2.
-3.
+1. raw = digitalRead(PIN_BUTTON) を読む（INPUT_PULLUPのため LOW=押下）
+2. pressedNow = (raw == LOW) に変換する
+3. 前回読取値 prevButtonReading と異なる場合、lastButtonMillis = now に更新する
+4. now - lastButtonMillis >= debounceDelay のときだけ buttonState を確定更新する
+5. buttonState が false→true に変化した瞬間だけ true を返す
+6. prevButtonReading = pressedNow に更新して終了する
 
 【エラー・異常ケース】
-- 異常な値が来た場合:
+- 入力が不安定な場合: デバウンス時間内は状態を確定しない
+- 常時押下状態の場合: エッジ判定により true は最初の1回のみ返す
+```
+
+---
+
+### `checkRemindTimer()` — 待機中にリマインド間隔の経過を判定する
+
+**basic_design.md 2-2 との対応：** F01 必須：一定時間ごとにLEDで促す
+
+**引数：** なし
+
+**戻り値：** なし（void）
+
+```
+【処理の流れ】
+1. currentState が STATE_IDLE でない場合は何もしない
+2. now - lastRemindMillis >= remindInterval を判定する
+3. 条件成立時、currentState = STATE_REMIND に遷移する
+4. warningStartMillis = now、lastAlertMillis = 0、buzzerPulseCount = 0 に初期化する
+5. 条件未成立時は待機を継続する
+
+【エラー・異常ケース】
+- remindInterval が 0 の場合: 誤動作防止のため最小値（例: 60000ms）を適用して判定する
+```
+
+---
+
+### `updateStatusLeds(int state)` — 状態に応じて緑/黄色LED表示を更新する
+
+**basic_design.md 2-2 との対応：** F02 必須：LEDでリマインド状態を表示
+
+**引数：** state（int）: 現在状態（STATE_IDLE / STATE_REMIND / STATE_WARNING）
+
+**戻り値：** なし（void）
+
+```
+【処理の流れ】
+1. 緑LEDは電源ON中のため常時 HIGH にする
+2. state が STATE_IDLE の場合
+  - isFeedbackActive が true なら黄色LEDを点滅させる
+  - それ以外は黄色LEDを LOW にする
+3. state が STATE_REMIND または STATE_WARNING の場合、黄色LEDを HIGH にする
+4. それ以外の未定義状態は安全側として黄色LEDを LOW にする
+
+【エラー・異常ケース】
+- state が未定義値の場合: 待機表示（黄色LED OFF）にフォールバックする
+```
+
+---
+
+### `checkWarningTimeout()` — リマインド中30秒無反応で警告遷移し、再鳴動を管理する
+
+**basic_design.md 2-2 との対応：** F03 必須：30秒無反応でブザー警告
+
+**引数：** なし
+
+**戻り値：** なし（void）
+
+```
+【処理の流れ】
+1. currentState が STATE_REMIND の場合
+  - now - warningStartMillis >= warningDelay を判定する
+  - 成立時は currentState = STATE_WARNING に遷移する
+  - 遷移直後にブザーを2回鳴らし、buzzerPulseCount=2、lastAlertMillis=now を設定する
+2. currentState が STATE_WARNING の場合
+  - now - lastAlertMillis >= alertRepeatInterval を判定する
+  - 成立時はブザーを再鳴動し、lastAlertMillis = now を更新する
+3. それ以外の状態では何もしない
+
+【エラー・異常ケース】
+- ブザー出力が異常な場合: ピン出力を LOW に戻し、次周期で再判定する
+- warningStartMillis 未初期化の場合: now を代入して判定基準を再同期する
+```
+
+---
+
+### `resetByButton(bool pressed)` — 押下時に警告解除・タイマー初期化・待機復帰を行う
+
+**basic_design.md 2-2 との対応：** F04 必須：ボタンでリセット
+
+**引数：** pressed（bool）: readButton() で確定した押下イベント
+
+**戻り値：** なし（void）
+
+```
+【処理の流れ】
+1. pressed が false の場合は何もしない
+2. pressed が true の場合、currentState = STATE_IDLE に設定する
+3. lastRemindMillis = now に更新し、次回リマインド起点をリセットする
+4. warningStartMillis / lastAlertMillis / buzzerPulseCount を初期化する
+5. ブザーを LOW にして鳴動を停止する
+6. isFeedbackActive = true、feedbackStartMillis = now にして黄色LED点滅を開始する
+
+【エラー・異常ケース】
+- 警告中に押下された場合: 最優先でブザー停止と待機復帰を実行する
+- 連打された場合: readButton() 側のデバウンスで多重実行を抑制する
+```
+
+---
+
+### `changeRemindInterval(bool longPress)` — 長押しでリマインド間隔を切り替える
+
+**basic_design.md 2-2 との対応：** A01 追加：リマインド間隔変更
+
+**引数：** longPress（bool）: 長押し確定イベント
+
+**戻り値：** なし（void）
+
+```
+【処理の流れ】
+1. longPress が false の場合は何もしない
+2. intervalModeIndex を 0→1→2→0 の順で更新する
+3. intervalModeIndex に応じて remindInterval を設定する
+  - 0: 1800000（30分）
+  - 1: 2700000（45分）
+  - 2: 3600000（60分）
+4. 切替直後に lastRemindMillis = now として次回判定を再スタートする
+
+【エラー・異常ケース】
+- intervalModeIndex が範囲外の場合: 0 に補正して 30分モードへ戻す
+```
+
+---
+
+### `changeAlertPattern(bool longPress)` — 長押しでLED/ブザーパターンを切り替える
+
+**basic_design.md 2-2 との対応：** A02 追加：LED/ブザーパターン切替
+
+**引数：** longPress（bool）: 長押し確定イベント
+
+**戻り値：** なし（void）
+
+```
+【処理の流れ】
+1. longPress が false の場合は何もしない
+2. currentPattern を 0→1→2→0 の順で更新する
+3. currentPattern に応じて以下の出力パラメータを切り替える
+  - 警告開始時の鳴動回数
+  - 再鳴動間隔（alertRepeatInterval）
+  - 黄色LEDの点滅パターン
+4. 切替内容を次回の checkWarningTimeout() / updateStatusLeds() に反映する
+
+【エラー・異常ケース】
+- currentPattern が範囲外の場合: 0（標準）へ戻す
 ```
 
 ---
@@ -171,17 +422,22 @@
 ```
 【考え方】
   ボタンが押されたとき、50ms 以内の連続入力は「同じ1回の押下」として無視する。
+  INPUT_PULLUP を使うため、LOW を押下として扱う。
 
 【処理の流れ】
-  1. ボタンのデジタル値を読む（digitalRead）
-  2. 前回確定した時刻（lastDebounceTime）からの経過時間を計算する
-  3. 経過時間 < DEBOUNCE_DELAY（例: 50ms）→ 無視する
-  4. 経過時間 ≥ DEBOUNCE_DELAY → ボタンの状態として確定する
-  5. lastDebounceTime を更新する
+  1. raw = digitalRead(PIN_BUTTON) を読む
+  2. pressedNow = (raw == LOW) に変換する（LOW=押下）
+  3. pressedNow が prevButtonReading と異なる場合、lastButtonMillis = now に更新する
+  4. now - lastButtonMillis < debounceDelay の間は、確定状態 buttonState を更新しない
+  5. now - lastButtonMillis >= debounceDelay なら、buttonState = pressedNow として確定する
+  6. buttonState が false→true に変化した瞬間を押下イベントとして採用する
+  7. prevButtonReading = pressedNow に更新して次ループへ進む
 
 【必要な変数（Section 1 に追加済みか確認）】
-  lastDebounceTime : unsigned long   // 前回確定した時刻
-  DEBOUNCE_DELAY   : const int = 50  // チャタリング判定時間（ms）
+  lastButtonMillis : unsigned long         // 入力変化を検出した時刻
+  debounceDelay    : const unsigned long   // チャタリング判定時間（50ms）
+  prevButtonReading: bool                  // 前回の生入力状態
+  buttonState      : bool                  // デバウンス後の確定状態
 ```
 
 ---
