@@ -1,6 +1,6 @@
 # 詳細設計書 — 組込み開発実習
 
-<!-- 作成者: あなたの名前 / 日付: YYYY-MM-DD / グループ: 〇-〇 -->
+<!-- 作成者: 竹下倖詩 / 日付: 2026-05-25 / グループ: 1-E -->
 
 > **このドキュメントの目的**
 > 基本設計書（basic_design.md）で「**どのような構造で作るか**」を決めました。
@@ -19,10 +19,10 @@
 
 | 項目 | basic_design.md から転記 |
 |:--|:--|
-| 作品タイトル | |
+| 作品タイトル | 反応速度計測マシーン |
 | 状態の種類（1-2 状態遷移から） | |
-| 実装する関数の数（2-2 関数一覧から） | 　個 |
-| グローバル変数の合計バイト数（2-1 SRAM確認から） | 　B |
+| 実装する関数の数（2-2 関数一覧から） | 7個 |
+| グローバル変数の合計バイト数（2-1 SRAM確認から） | 17B |
 
 ---
 
@@ -33,21 +33,27 @@
 
 ```
 【ピン定義】（basic_design.md 3-1 から転記）
-  PIN_BUTTON    = 2    // タクトスイッチ（INPUT_PULLUP）
-  PIN_LED_RED   = 9    // 赤LED
-  PIN_LED_GREEN = 10   // 緑LED
-  PIN_BUZZER    = 11   // パッシブブザー
+  PIN_LED    = 2    // LED
+  PIN_BUTTON_1   = 3    // タクトスイッチ（INPUT_PULLUP）
+  PIN_BUTTON_2 = 4   // タクトスイッチ（INPUT_PULLUP）
+  PIN_BUZZER_PASSIVE    = 11   // パッシブブザー
+  PIN_BUZZER_ACTIVE    = 12   // アクティブブザー
+  PIN_7SEG    = 8（CLK）, 9（DIO）   // 4桁の7セグメントディスプレイ
 
 【状態管理】（basic_design.md 1-2 の状態名から転記）
-  currentState  : int = 0   // 0:待機 1:動作中 2:完了 3:エラー
+  a
 
 【タイマー（millis()用）】（basic_design.md 2-3 から転記）
-  lastMillis_LED    : unsigned long = 0
-  lastMillis_Sensor : unsigned long = 0
+  a
 
 【センサー・入力値】（basic_design.md 2-1 から転記）
-  sensorValue   : int  = 0
-  buttonState   : bool = false
+  led_state　: bool = false   // true:点灯 false:消灯
+  active_buzzer_state　: bool = false   // true:音が鳴る false:音が鳴らない
+  passive_buzzer_state　: int = 0   // 0:失敗 1:成功
+  display_time　: unsgined char[4]   // unsgined intの場合は初期値0
+  button_time　: int = 0
+  success_fail　: int = 0   // 0:失敗 1:成功 2:エラー
+  debounceDelay　: const unsgined int = 0
 
 【その他のフラグ・カウンター】
   （自分のものを追加）
@@ -61,20 +67,9 @@
 > **疑似コード**（日本語＋処理の流れ）で書いてください。実際のC++コードは書かなくてOKです。
 
 ---
-
 ### `setup()` — 初期化処理
 
 ```
-【処理の流れ】
-1. ピンモードを設定する
-   - PIN_BUTTON  → INPUT_PULLUP
-   - PIN_LED_*   → OUTPUT
-   - PIN_BUZZER  → OUTPUT
-
-2. ライブラリの初期化（使うものだけ）
-   - 例: lcd.begin(16, 2)
-   - 例: servo.attach(PIN_SERVO)
-
 3. Serial.begin(9600)（デバッグ用）
 
 4. 起動確認（任意）: 緑LEDを1秒点灯して消灯
@@ -83,11 +78,15 @@
 **↓ 自分の setup() を設計してください**
 ```
 【処理の流れ】
-1.
-2.
-3.
+1. 各種ピンモードの設定
+   - PIN_BUTTON  → INPUT_PULLUP
+   - PIN_LED_*   → OUTPUT
+   - PIN_BUZZER  → OUTPUT
+2. ライブラリの初期化
+   - 例: lcd.begin(16, 2)
+3. randomSeed設定
+   - randomSeed(analogRead(0));
 ```
-
 ---
 
 ### `loop()` — メインループ
@@ -98,39 +97,29 @@
 【処理の流れ】
 
 ＜毎ループ実行すること＞
-  - 入力を読む（readButton(), readSensor() などを呼ぶ）
-  - 現在時刻を取得: now = millis()
+random(0,10000)でLEDとアクティブブザーが動作するまでのランダムな待機時間を生成
 
-＜currentState が 0（待機中）のとき＞
-  - センサー値を監視する
-  - 検知条件を満たしたら → currentState = 1
-
-＜currentState が 1（動作中）のとき＞
-  - メイン処理を行う
-  - 終了条件を満たしたら → currentState = 2
-
-＜currentState が 2（完了）のとき＞
-  - 完了表示をする
-  - リセットボタンが押されたら → currentState = 0
-
-＜currentState が 3（エラー）のとき＞
-  - エラー表示をする / リセットを待つ
-```
-
-**↓ 自分の loop() を設計してください**
-```
-【処理の流れ】
-
-＜毎ループ実行すること＞
+＜a が a のとき＞
+  - a
 
 
-＜currentState が 　　 のとき＞
+＜success_fail が 0(失敗) のとき＞
+  - buzzer_state = 0にする
+  - 4桁の7セグメントディスプレイに計測結果を表示する
 
+＜success_fail が 1(成功) のとき＞
+  - buzzer_state = 1にする
+  - 4桁の7セグメントディスプレイに計測結果を表示する
 
-＜currentState が 　　 のとき＞
+＜success_fail が 2(エラー) のとき＞
+  - 4桁の7セグメントディスプレイに----を表示する
+  - 待機中へ戻る
 
+＜passive_buzzer_state が 0(失敗) のとき＞
+  - メイン処理を行う(失敗音を鳴らす)
 
-＜currentState が 　　 のとき＞
+＜passive_buzzer_state が 1(成功) のとき＞
+  - メイン処理を行う(成功音を鳴らす)
 
 ```
 
@@ -139,28 +128,131 @@
 ### （関数ごとに以下のブロックをコピーして追加してください）
 
 > ※ 基本設計書 2-2 の関数一覧に記載した関数を1つずつ設計します。
-
 ---
+### `randonmSeed(analogRead(0))` — ランダム値の均一化を防ぐ
 
-### `関数名()` — （役割を1行で書く）
+**basic_design.md 2-2 との対応：** ランダムで値を生成する際に値が固定されるのを防ぐ
 
-**basic_design.md 2-2 との対応：** （基本設計書の関数一覧の説明を転記）
+**引数：** `なし`
 
-**引数：** `引数名`（型）: 何の値か
+**戻り値：** void型
+```
+```
+---
+### `button_start()` — 開始ボタン動作
 
-**戻り値：** 型（なしの場合は void）
+**basic_design.md 2-2 との対応：** 開始ボタンを押す
+
+**引数：** `int pinとbool state`
+
+**戻り値：** bool型
 
 ```
 【処理の流れ】
-1.
-2.
+1. ボタンが押されたかどうかを取得し、オンのままにする
+2. millisでチャタリング対策
+3. 次押す際はオフになるように!で反転処理
+
+【エラー・異常ケース】
+- 異常な値が来た場合:
+```
+---
+### `led_active_state()` — LEDとアクティブブザーの同時動作
+
+**basic_design.md 2-2 との対応：** LEDとアクティブブザーの同時動作
+
+**引数：** `なし`
+
+**戻り値：** bool型
+```
+【処理の流れ】
+1. random(0,10000)でランダムな待機時間を生成
+2. trueにして、LEDはdigitalWrite、アクティブブザーはanalogWriteで動作
+3. LED・アクティブブザーが動作した瞬間をint start_timeに計測
+4. millis()でms待ち、falseにして動作を止める
+
+【エラー・異常ケース】
+- 異常な値が来た場合:
+```
+---
+### `button_measure()` — 計測ボタン動作
+
+**basic_design.md 2-2 との対応：** 計測ボタンを押す
+
+**引数：** `int pin`
+
+**戻り値：** bool型
+
+```
+【処理の流れ】
+1. 計測ボタンを押す
+2. 計測ボタンを押した瞬間をint end_timeに計測
+3. millisでチャタリング対策
+
+【エラー・異常ケース】
+- 10000ms(10.000秒)以上経過しても計測ボタンが押されなかった場合:
+  ・待機中に戻る。
+```
+---
+### `suc_fail()` — 計測結果の計算・判定
+
+**basic_design.md 2-2 との対応：** 計測結果を計算し、成功か失敗の判定を行う
+
+**引数：** `なし`
+
+**戻り値：** int型
+
+```
+【処理の流れ】
+1. end_time - start_timeを行い、結果をtotal_timeに格納。
+2. 1の結果が400ms(0.4秒)以内なら成功判定を行い、(return 1)
+　  401ms以上なら失敗判定を行う。(return 0)
+3.
+
+【エラー・異常ケース】
+- 計測結果が10000ms(10.000秒)以上の場合:
+  ・
+```
+---
+### `passive_state()` — パッシブブザー動作
+
+**basic_design.md 2-2 との対応：** パッシブブザーで成功・失敗音が鳴る
+
+**引数：** `int result`
+
+**戻り値：** void型
+
+```
+【処理の流れ】
+1. if文で、suc_fail()が1を返すなら成功音を鳴らす
+2. 1を満たさなければ失敗音を鳴らす
 3.
 
 【エラー・異常ケース】
 - 異常な値が来た場合:
 ```
-
 ---
+### `seg_47()` — 計測結果の表示
+
+**basic_design.md 2-2 との対応：** 4桁の7セグメントディスプレイに結果を表示
+
+**引数：** `int time`
+
+**戻り値：** void型
+
+```
+【処理の流れ】
+1. total_timeを4桁の7セグメントディスプレイに表示する
+2.
+3.
+
+【エラー・異常ケース】
+- 結果が10000ms(10.000秒)以上の時:
+  ・----と表示
+```
+---
+
+
 
 ## 3. 重要ロジックの詳細設計
 

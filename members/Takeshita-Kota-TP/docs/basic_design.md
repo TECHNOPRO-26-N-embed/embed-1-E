@@ -119,8 +119,9 @@
 |:--|:--|:--|:--|:--|:--|
 | button_time | ボタンを押すまでの時間 | float | 4B | 0 |  |
 | success_fail | 10.000秒以内に押したかどうかの判定 | int | 2B | 0 |  |
-| display_time | 4桁の7セグメントディスプレイに表示する秒数 | unsgined char[4] | 4B | 0 |  |
-| buzzer_state | 成功か失敗を示すブザーの状態 | int | 2B | 0 |  |
+| display_time | 4桁の7セグメントディスプレイに表示する秒数 | unsgined char[4](unsgined int) | 4B | 0 |  |
+| passive_buzzer_state | 成功か失敗を示すパッシブブザーの状態 | int | 2B | 0 |  |
+| active_buzzer_state | アクティブブザーの状態 | bool | 1B | false |  |
 | led_state | LEDの状態 | bool | 1B | false |  |
 | debounceDelay | ボタンのデバウンス時間（ms） | const unsigned int | 2B | 50 | チャタリング対策 |
 |  |  |  |  |  |  |
@@ -128,7 +129,7 @@
 > [!CAUTION]
 > **SRAM使用量チェック（Arduino UNO R3 の上限は 2048B）**
 >
-> グローバル変数の合計: ＿＿17＿ B
+> グローバル変数の合計: ＿＿16＿ B
 >
 > | 合計バイト数 | 判定 |
 > |:--|:--|
@@ -150,13 +151,15 @@
 |  | 初期化 | `setup()` | ピンモード設定・ライブラリ初期化・起動確認 | なし | なし | 起動時1回 |
 | — | （共通）待機・制御 | `loop()` | 状態に応じて各関数を呼び出すメインループ | なし | なし | 常時 |
 | — | （共通）ボタン読出 | `readButton()` | チャタリング処理済みのボタン状態を返す | なし | bool | loop()内 |
-| F01 | LED点灯(必須機能①) | `light()` | LEDが一瞬光る |  |  | loop()内 |
-| F02 | パッシブブザー動作(必須機能②) | `passive()` | パッシブブザーが鳴る |  |  | loop()内 |
-| F03 | アクティブブザー成功音(必須機能③) | `active_suc()` | アクティブブザーで正解音が鳴る |  |  | loop()内 |
-| F04 | アクティブブザー失敗音(必須機能④) | `active_fail()` | アクティブブザーで失敗音が鳴る |  |  | loop()内 |
-| F05 | 計測結果表示(必須機能⑤) | `seg_47()` | 4桁の7セグメントディスプレイに結果表示 |  |  | loop()内 |
-| F06 | 開始ボタン動作(必須機能⑥) | `button_start()` | 開始ボタンを押す |  |  | loop()内 |
-| F07 | 計測ボタン動作(必須機能⑦) | `button_measure()` | 計測ボタンを押す |  |  | loop()内 |
+| — | ランダム値の均一化を防ぐ | `randomSeed(analogRead(0))` | ランダムで値を生成する際に値が固定されるのを防ぐ | なし | なし | setup()内 |
+| F01 | ランダムな待機時間生成 | `random(0,10000)` | なし | なし | int | loop()内 |
+| F02 | 開始ボタン動作(必須機能⑥) | `button_start()` | 開始ボタンを押す | int bool | bool | loop()内 |
+| F03 | LEDとアクティブブザーの同時動作 | `led_active_state()` | ledとアクティブブザーの同時動作 | trueかfalse | bool | loop()内 |
+| F04 | 計測ボタン動作 | `button_measure()` | 計測ボタンを押す | なし | long | loop()内 |
+| F05 | 計測結果の計算・判定 | `suc_fail()` | 計測結果を計算し、成功か失敗の判定を行う | なし | int | loop()内 |
+| F06 | パッシブブザー動作 | `passive_state()` | パッシブブザーで成功・失敗音が鳴る | int result | void | loop()内 |
+| F07 | 計測結果表示 | `seg_47()` | 4桁の7セグメントディスプレイに結果表示 | int time | void | loop()内 |
+
 
 > [!CAUTION]
 > loop() の中で全部書こうとしていませんか？
