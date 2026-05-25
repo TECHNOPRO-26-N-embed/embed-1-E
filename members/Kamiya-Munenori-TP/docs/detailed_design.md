@@ -37,7 +37,7 @@
   PIN_BUZZER    : const uint8_t = 12   // アクティブブザー
 
 【状態管理】（basic_design.md 1-2 の状態名から転記）
-  state         : uint8_t = 0          // 0:待機中 1:休憩中 2:通知中
+  state         : uint8_t = 0          // 0:待機中 1:休憩中 2:通知中 3:エラー
 
 【休憩時間・時刻記録】（basic_design.md 2-1 から転記）
   duration      : uint16_t = 600       // 休憩時間（秒）
@@ -48,6 +48,9 @@
   breakStartMs  : unsigned long = 0    // 休憩開始時のmillis
   btnLastMs     : unsigned long = 0    // ボタン状態が変化した時刻
   debounceMs    : const unsigned long = 50
+
+【ブザー制御用タイマー】
+  buzzerMs      : unsigned long = 0    // ブザー開始時のmillis（1秒非同期制御用）
 
 【入力・出力状態】（basic_design.md 2-1 から転記）
   btnStable     : bool = false         // デバウンス後の確定状態
@@ -75,36 +78,19 @@
 ```
 【処理の流れ】
 1. ピンモードを設定する
-   - PIN_BUTTON  → INPUT_PULLUP
-   - PIN_LED_*   → OUTPUT
-   - PIN_BUZZER  → OUTPUT
-
-2. ライブラリの初期化（使うものだけ）
-   - 例: lcd.begin(16, 2)
-   - 例: servo.attach(PIN_SERVO)
-
-3. Serial.begin(9600)（デバッグ用）
-
-4. 起動確認（任意）: 緑LEDを1秒点灯して消灯
-```
-
-**↓ 自分の setup() を設計してください**
-```
-【処理の流れ】
-1. ピンモードを設定する
   - PIN_BUTTON → INPUT_PULLUP
   - ボタン未押下は HIGH、押下は LOW として扱う
-  - PIN_BUZZER → OUTPUT（初期はLOW）
+  - PIN_BUZZER → OUTPUT（初期はLOW） //OFF
 
 2. RTCとシリアルを初期化する
-  - Wire.begin() を実行
-  - RTC.begin() を実行し、失敗時は rtcError = true にする
-  - Serial.begin(9600) を実行
+  - Wire.begin() を実行 // I2C通信開始（RTCなどの外部デバイスとやりとりするため）
+  - RTC.begin() を実行し、失敗時は rtcError = true にする // RTC（時計モジュール）の初期化。失敗時はエラーフラグON
+  - Serial.begin(9600) を実行 // シリアル通信開始（PCへのログ出力用）
 
 3. 変数の初期状態を設定する
-  - state = 0（待機中）
-  - btnStable / btnEvent / buzzer を false にする
-  - startTime / endTime / breakStartMs / btnLastMs を 0 にする
+  - state = 0 //待機中
+  - btnStable / btnEvent / buzzer を false にする //ボタンやブザーの状態をリセット
+  - startTime / endTime / breakStartMs / btnLastMs を 0 にする //時刻やタイマー関連も0で初期化
 
 4. 起動時の確認ログを出力する（任意）
   - rtcError が false の場合: "System ready" を出力
@@ -121,46 +107,24 @@
 【処理の流れ】
 
 ＜毎ループ実行すること＞
-  - 入力を読む（readButton(), readSensor() などを呼ぶ）
-  - 現在時刻を取得: now = millis()
-
-＜currentState が 0（待機中）のとき＞
-  - センサー値を監視する
-  - 検知条件を満たしたら → currentState = 1
-
-＜currentState が 1（動作中）のとき＞
-  - メイン処理を行う
-  - 終了条件を満たしたら → currentState = 2
-
-＜currentState が 2（完了）のとき＞
-  - 完了表示をする
-  - リセットボタンが押されたら → currentState = 0
-
-＜currentState が 3（エラー）のとき＞
-  - エラー表示をする / リセットを待つ
-```
-
-**↓ 自分の loop() を設計してください**
-```
-【処理の流れ】
-
-＜毎ループ実行すること＞
-  - btnEvent = readButton() を実行する
-  - now（ローカル変数）= millis() を取得する
+  - btnEvent = readButton() を実行する  // ボタンが押されたか判定
+  - now（ローカル変数）= millis() を取得する // 現在時刻（ms）を取得
 
 ＜state が 0（待機中）のとき＞
-  - btnEvent が true の場合: startBreak() を呼び、state = 1（休憩中）に遷移する
-  - それ以外は待機を継続する
+  - btnEvent が true の場合: startBreak() を呼び、state = 1（休憩中）に遷移する // ボタン押下で休憩開始
+  - それ以外は待機を継続する // 何もしない
 
 ＜state が 1（休憩中）のとき＞
-  - 休憩時間の経過を確認する
-  - duration に達した場合: setBuzzer(true) で通知開始し、state = 2（通知中）に遷移する
-  - btnEvent が true の場合: endBreak() を呼び、state = 0（待機中）に遷移する（早期終了）
+  - 休憩時間の経過を確認する // タイマーで経過判定
+  - duration に達した場合: setBuzzer(true) で通知開始し、state = 2（通知中）に遷移する // 時間経過で通知
+  - btnEvent が true の場合: endBreak() を呼び、state = 0（待機中）に遷移する（早期終了） // ボタン押下で早期終了
 
 ＜state が 2（通知中）のとき＞
-  - ブザー鳴動状態を維持する
-  - btnEvent が true の場合: setBuzzer(false) と endBreak() を実行し、state = 0（待機中）に遷移する
+  - ブザー鳴動状態を維持する // 通知中はブザーON
+  - btnEvent が true の場合: setBuzzer(false) と endBreak() を実行し、state = 0（待機中）に遷移する // ボタン押下で通知終了
 
+＜state が 3（エラー）のとき＞
+  - エラー内容をシリアルモニタに出力し、待機中に戻す // エラー発生時の処理
 ```
 
 ---
@@ -175,9 +139,9 @@
 
 ```
 【処理の流れ】
-1. PIN_BUTTON を読み、HIGH=未押下、LOW=押下として判定する（INPUT_PULLUP前提）。
-2. 前回変化時刻 btnLastMs から debounceMs 以上経過しているか確認する。
-3. 経過していれば btnStable を更新し、HIGH→LOW（押下エッジ）のときのみ btnEvent=true を返す。
+1. PIN_BUTTON を読む // ボタンの状態を取得
+2. 前回から十分時間が経っていれば btnStable を更新 // チャタリング防止
+3. 押された瞬間だけ btnEvent=true を返す // 押下エッジのみ
 
 【エラー・異常ケース】
 - ボタン値が不安定な場合: チャタリングとして無視し false を返す。
@@ -195,9 +159,9 @@
 
 ```
 【処理の流れ】
-1. RTCモジュールから現在時刻を読み出す。
-2. 読み出し成功時は rtcError=false にして Unix time を返す。
-3. 読み出し失敗時は rtcError=true にして 0 を返す。
+1. RTCモジュールから現在時刻を読み出す。 // RTCから時刻取得
+2. 読み出し成功時は rtcError=false にして Unix time を返す。 // 成功時はエラー解除＆時刻返す
+3. 読み出し失敗時は rtcError=true にして 0 を返す。 // 失敗時はエラーフラグON＆0返す
 
 【エラー・異常ケース】
 - RTC通信失敗時: エラーフラグを立て、呼び出し元で警告出力する。
@@ -215,12 +179,13 @@
 
 ```
 【処理の流れ】
-1. 引数 on の値に応じて PIN_BUZZER を HIGH/LOW 出力する。
-2. buzzer フラグを on と同じ値に更新する。
-3. 必要に応じて状態遷移側で通知開始/停止を判断する。
 
-【エラー・異常ケース】
-- 鳴動しない場合: 配線断線の可能性としてシリアル警告対象にする。
+1. onがtrueならブザーON、falseならOFFにする // ブザー制御
+2. buzzerフラグも同じ値にする // 状態記録
+3. on==trueでブザーを鳴らし始めた場合、buzzerMs = millis() を記録する // 1秒非同期制御用
+4. on==falseでOFFにした場合、buzzerMs = 0 にリセットする
+5. （通知の開始・停止は呼び出し元で判断）
+
 ```
 
 ---
@@ -236,8 +201,10 @@
 ```
 【処理の流れ】
 1. startTime = getTime() で開始時刻を取得する。
-2. breakStartMs = millis() を保存し、休憩タイマーの基準時刻にする。
-3. printLog("BREAK_START") を実行し、state=1（休憩中）へ遷移する。
+2. setBuzzer(true) を呼び、buzzerMs = millis() でブザー開始時刻を記録 // 休憩開始を1秒ブザーで通知
+3. 以降のloop()で「buzzer==true かつ millis()-buzzerMs>=1000」になったら setBuzzer(false) で自動停止（非同期1秒制御）
+4. breakStartMs = millis() を保存し、休憩タイマーの基準時刻にする。
+5. printLog("BREAK_START") を実行し、state=1（休憩中）へ遷移する。
 
 【エラー・異常ケース】
 - startTime が 0 の場合: rtcError として警告ログを出し、必要なら待機中に戻す。
@@ -427,9 +394,7 @@
 
 | No | 指摘内容 | 指摘者 | 対応 |
 |:---|:---|:---|:---|
-| 1 |  |  |  |
-| 2 |  |  |  |
-| 3 |  |  |  |
+| 1 | loop()内にエラー時の動作が無い | 呉 | 元々電源を抜いて解決しようと思っていたけど、エラー時の動作を書いた方がいいかもしれないです |
 
 ### 7-2. レビューを受けて変更した点
 
