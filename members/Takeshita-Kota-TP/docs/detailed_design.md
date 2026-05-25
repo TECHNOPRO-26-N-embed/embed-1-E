@@ -1,6 +1,6 @@
 # 詳細設計書 — 組込み開発実習
 
-<!-- 作成者: あなたの名前 / 日付: YYYY-MM-DD / グループ: 〇-〇 -->
+<!-- 作成者: 竹下倖詩 / 日付: 2026-05-25 / グループ: 1-E -->
 
 > **このドキュメントの目的**
 > 基本設計書（basic_design.md）で「**どのような構造で作るか**」を決めました。
@@ -19,10 +19,10 @@
 
 | 項目 | basic_design.md から転記 |
 |:--|:--|
-| 作品タイトル | |
+| 作品タイトル | 反応速度計測マシーン |
 | 状態の種類（1-2 状態遷移から） | |
-| 実装する関数の数（2-2 関数一覧から） | 　個 |
-| グローバル変数の合計バイト数（2-1 SRAM確認から） | 　B |
+| 実装する関数の数（2-2 関数一覧から） | 7個 |
+| グローバル変数の合計バイト数（2-1 SRAM確認から） | 25B |
 
 ---
 
@@ -33,26 +33,42 @@
 
 ```
 【ピン定義】（basic_design.md 3-1 から転記）
-  PIN_BUTTON    = 2    // タクトスイッチ（INPUT_PULLUP）
-  PIN_LED_RED   = 9    // 赤LED
-  PIN_LED_GREEN = 10   // 緑LED
-  PIN_BUZZER    = 11   // パッシブブザー
+  PIN_LED    = 2    // LED
+  PIN_BUTTON_1   = 3    // タクトスイッチ（INPUT_PULLUP）
+  PIN_BUTTON_2 = 4   // タクトスイッチ（INPUT_PULLUP）
+  PIN_BUZZER_PASSIVE    = 11   // パッシブブザー
+  PIN_BUZZER_ACTIVE    = 12   // アクティブブザー
+  PIN_7SEG    = 8（CLK）, 9（DIO）   // 4桁の7セグメントディスプレイ
 
 【状態管理】（basic_design.md 1-2 の状態名から転記）
-  currentState  : int = 0   // 0:待機 1:動作中 2:完了 3:エラー
+  currentState : int = 0   // 0:待機(待機中) 1:動作中(計測中) 2:完了(結果表示) 3:エラー(警告)
+  // 状態遷移: 0(待機) -> 1(動作中) -> 2(完了) -> 0(待機)
+  // 例外遷移: フライング/異常値/タイムアウト時は 3(エラー) -> 0(待機)
+
 
 【タイマー（millis()用）】（basic_design.md 2-3 から転記）
-  lastMillis_LED    : unsigned long = 0
-  lastMillis_Sensor : unsigned long = 0
+  led_active_millis : unsigned long = 0
+  measuer_millis : unsigned long = 0
+  passive_millis : unsigned long = 0
+  seg47_millis : unsigned long = 0
+
 
 【センサー・入力値】（basic_design.md 2-1 から転記）
-  sensorValue   : int  = 0
-  buttonState   : bool = false
+  button_state : bool = false   // true:オン false:オフ
+  led_state : bool = false   // true:点灯 false:消灯
+  active_state : bool = false   // true:鳴動 false:鳴動
+  start_time : float = 0.000
+  button_measuer : bool = false   // true:押下 false:未押下
+  end_time : float = 0.000
+  total_time : float = 0.000
+  suc_fail : int = 0  // 0:失敗 1:成功 2:エラー
+  passive_state : void
+  display_time : unsgined float = 0.000
+  debounceDelay　: const unsgined int = 0
 
 【その他のフラグ・カウンター】
   （自分のものを追加）
 ```
-
 ---
 
 ## 2. 各関数の詳細設計
@@ -61,33 +77,22 @@
 > **疑似コード**（日本語＋処理の流れ）で書いてください。実際のC++コードは書かなくてOKです。
 
 ---
-
 ### `setup()` — 初期化処理
-
-```
-【処理の流れ】
-1. ピンモードを設定する
-   - PIN_BUTTON  → INPUT_PULLUP
-   - PIN_LED_*   → OUTPUT
-   - PIN_BUZZER  → OUTPUT
-
-2. ライブラリの初期化（使うものだけ）
-   - 例: lcd.begin(16, 2)
-   - 例: servo.attach(PIN_SERVO)
-
-3. Serial.begin(9600)（デバッグ用）
-
-4. 起動確認（任意）: 緑LEDを1秒点灯して消灯
-```
 
 **↓ 自分の setup() を設計してください**
 ```
 【処理の流れ】
-1.
-2.
-3.
+1. 各種ピンモードの設定
+   - PIN_BUTTON  → INPUT_PULLUP
+   - PIN_LED_*   → OUTPUT
+   - PIN_BUZZER  → OUTPUT
+2. ライブラリの初期化
+   - TM1637Displayライブラリの初期化
+     - 例: display = TM1637Display(CLK, DIO)
+     - display.setBrightness(0x0f) // 輝度最大
+3. randomSeed設定
+   - randomSeed(analogRead(0));
 ```
-
 ---
 
 ### `loop()` — メインループ
@@ -98,39 +103,25 @@
 【処理の流れ】
 
 ＜毎ループ実行すること＞
-  - 入力を読む（readButton(), readSensor() などを呼ぶ）
-  - 現在時刻を取得: now = millis()
+random(0,10000)でLEDとアクティブブザーが動作するまでのランダムな待機時間を生成
 
-＜currentState が 0（待機中）のとき＞
-  - センサー値を監視する
-  - 検知条件を満たしたら → currentState = 1
+＜suc_fail が 失敗 のとき＞
+  - buzzer_state = 0にする
+  - 4桁の7セグメントディスプレイに計測結果を表示する
 
-＜currentState が 1（動作中）のとき＞
-  - メイン処理を行う
-  - 終了条件を満たしたら → currentState = 2
+＜suc_fail が 成功 のとき＞
+  - buzzer_state = 1にする
+  - 4桁の7セグメントディスプレイに計測結果を表示する
 
-＜currentState が 2（完了）のとき＞
-  - 完了表示をする
-  - リセットボタンが押されたら → currentState = 0
+＜suc_fail が エラー のとき＞
+  - 4桁の7セグメントディスプレイに----を表示する
+  - 待機中へ戻る
 
-＜currentState が 3（エラー）のとき＞
-  - エラー表示をする / リセットを待つ
-```
+＜passive_state が 失敗 のとき＞
+  - メイン処理を行う(失敗音を鳴らす)
 
-**↓ 自分の loop() を設計してください**
-```
-【処理の流れ】
-
-＜毎ループ実行すること＞
-
-
-＜currentState が 　　 のとき＞
-
-
-＜currentState が 　　 のとき＞
-
-
-＜currentState が 　　 のとき＞
+＜passive_state が 成功 のとき＞
+  - メイン処理を行う(成功音を鳴らす)
 
 ```
 
@@ -139,27 +130,128 @@
 ### （関数ごとに以下のブロックをコピーして追加してください）
 
 > ※ 基本設計書 2-2 の関数一覧に記載した関数を1つずつ設計します。
-
 ---
+### `randonmSeed(analogRead(0))` — ランダム値の均一化を防ぐ
 
-### `関数名()` — （役割を1行で書く）
+**basic_design.md 2-2 との対応：** ランダムで値を生成する際に値が固定されるのを防ぐ
 
-**basic_design.md 2-2 との対応：** （基本設計書の関数一覧の説明を転記）
+**引数：** `なし`
 
-**引数：** `引数名`（型）: 何の値か
+**戻り値：** void型
+```
+```
+---
+### `button_start()` — 開始ボタン動作
 
-**戻り値：** 型（なしの場合は void）
+**basic_design.md 2-2 との対応：** 開始ボタンを押す
+
+**引数：** `int pinとbool state`
+
+**戻り値：** bool型
 
 ```
 【処理の流れ】
-1.
-2.
+1. ボタンが押されたかどうかを取得し、オンのままにする
+2. millisでチャタリング対策
+3. 次押す際はオフになるように!で反転処理
+
+【エラー・異常ケース】
+- 異常な値が来た場合:
+```
+---
+### `led_active_state()` — LEDとアクティブブザーの同時動作
+
+**basic_design.md 2-2 との対応：** LEDとアクティブブザーの同時動作
+
+**引数：** `なし`
+
+**戻り値：** bool型
+```
+【処理の流れ】
+1. random(0,10000)でランダムな待機時間を生成
+2. trueにして、LEDはdigitalWrite、アクティブブザーはanalogWriteで動作
+3. LED・アクティブブザーが動作した瞬間をint start_timeに計測
+4. millis()でms待ち、falseにして動作を止める
+
+【エラー・異常ケース】
+- 異常な値が来た場合:
+```
+---
+### `button_measure()` — 計測ボタン動作
+
+**basic_design.md 2-2 との対応：** 計測ボタンを押す
+
+**引数：** `int pin`
+
+**戻り値：** bool型
+
+```
+【処理の流れ】
+1. 計測ボタンを押す
+2. 計測ボタンを押した瞬間をint end_timeに計測
+3. millisでチャタリング対策
+
+【エラー・異常ケース】
+- 10000ms(10.000秒)以上経過しても計測ボタンが押されなかった場合:
+  ・待機中に戻る。
+```
+---
+### `suc_fail()` — 計測結果の計算・判定
+
+**basic_design.md 2-2 との対応：** 計測結果を計算し、成功か失敗の判定を行う
+
+**引数：** `なし`
+
+**戻り値：** int型
+
+```
+【処理の流れ】
+1. end_time - start_timeを行い、結果をtotal_timeに格納。
+2. 1の結果が433ms(0.433秒)以下なら成功判定を行い、(return 1)
+　  434ms(0.434秒)以上なら失敗判定を行う。(return 0)
+3.
+
+【エラー・異常ケース】
+- 計測結果が10000ms(10.000秒)以上の場合:
+  ・
+```
+---
+### `passive_state()` — パッシブブザー動作
+
+**basic_design.md 2-2 との対応：** パッシブブザーで成功・失敗音が鳴る
+
+**引数：** `int result`
+
+**戻り値：** void型
+
+```
+【処理の流れ】
+1. if文で、suc_fail()が1を返すなら成功音を鳴らす
+2. 1を満たさなければ失敗音を鳴らす
 3.
 
 【エラー・異常ケース】
 - 異常な値が来た場合:
 ```
+---
+### `seg_47()` — 計測結果の表示
 
+**basic_design.md 2-2 との対応：** 4桁の7セグメントディスプレイに結果を表示
+
+**引数：** `int time`
+
+**戻り値：** void型
+
+```
+【処理の流れ】
+1. total_timeを4桁の7セグメントディスプレイに表示する
+2.
+3.
+
+【エラー・異常ケース】
+- 結果が10000ms(10.000秒)以上の時:
+  ・----と表示
+```
 ---
 
 ## 3. 重要ロジックの詳細設計
@@ -170,18 +262,29 @@
 
 ```
 【考え方】
-  ボタンが押されたとき、50ms 以内の連続入力は「同じ1回の押下」として無視する。
+  ボタンが押されたとき、50ms以内の連続入力は「同じ1回の押下」として無視する。
+  複数ボタンがある場合は、それぞれ独立してデバウンス処理を行う。
 
 【処理の流れ】
-  1. ボタンのデジタル値を読む（digitalRead）
-  2. 前回確定した時刻（lastDebounceTime）からの経過時間を計算する
-  3. 経過時間 < DEBOUNCE_DELAY（例: 50ms）→ 無視する
-  4. 経過時間 ≥ DEBOUNCE_DELAY → ボタンの状態として確定する
-  5. lastDebounceTime を更新する
+  1. 各ボタンのデジタル値を読む（digitalRead）
+  2. ボタンの状態が前回と異なれば、lastDebounceTimeXを更新（Xはボタンごと）
+  3. 前回確定した時刻（lastDebounceTimeX）からの経過時間を計算する
+  4. 経過時間 < DEBOUNCE_DELAY（例: 50ms）の場合は無視する
+  5. 経過時間 ≥ DEBOUNCE_DELAY かつ状態が変化した場合のみ「押下」と判定
+  6. lastDebounceTimeX を更新する
 
 【必要な変数（Section 1 に追加済みか確認）】
-  lastDebounceTime : unsigned long   // 前回確定した時刻
-  DEBOUNCE_DELAY   : const int = 50  // チャタリング判定時間（ms）
+  lastDebounceTime1 : unsigned long   // ボタン①用
+  lastDebounceTime2 : unsigned long   // ボタン②用
+  buttonState1      : bool            // ボタン①の現在の状態
+  lastButtonState1  : bool            // ボタン①の前回の状態
+  buttonState2      : bool            // ボタン②の現在の状態
+  lastButtonState2  : bool            // ボタン②の前回の状態
+  DEBOUNCE_DELAY    : const int = 50  // チャタリング判定時間（ms）
+
+【補足】
+  - 状態遷移（loop内）で「押下イベント」として使う場合は、デバウンス済みの値を参照すること。
+  - 必要に応じて関数化（例：readButton(pin)）し、どのボタンにも使えるようにする。
 ```
 
 ---
@@ -190,16 +293,36 @@
 
 ```
 【考え方】
-  「前回実行した時刻」を記録しておき、「今の時刻 − 前回時刻 ≥ 周期」なら実行する。
+  delay()を使うとその間すべての処理が止まるため、millis()を使って「非停止型」のタイマー管理を行う。
+  複数のタイマー（LED点滅、ブザー制御、計測タイムアウト、警告表示など）を同時に管理できる。
 
-【処理の流れ（例: LED点滅）】
-  1. now = millis()
-  2. now - lastMillis_LED >= LED_INTERVAL かどうか確認
-  3. 条件を満たした場合: LEDのON/OFFを切り替え、lastMillis_LED = now
-  4. 条件を満たさない場合: 何もしない（次のループで再チェック）
+【処理の流れ（例: LED点滅・複数タイマー）】
+  1. now = millis() で現在時刻を取得
+  2. 各タイマーごとに「now - lastMillis_X >= INTERVAL_X」か判定（Xは用途ごと）
+  3. 条件を満たした場合のみ、対応する処理（LEDのON/OFF切替、ブザー鳴動、状態遷移など）を実行し、lastMillis_X = now で更新
+  4. 条件を満たさない場合は何もしない（次ループで再チェック）
 
-【自分のシステムで millis() を使う処理】
-  （basic_design.md 2-3 のタイミング設計から転記して具体化する）
+【自分のシステムで millis() を使う処理例】
+  - LED点滅周期管理（例: 500msごとにON/OFF）
+  - アクティブブザーの鳴動時間管理
+  - 計測開始からのタイムアウト判定（例: 10秒経過で自動リセット）
+  - 警告表示後の自動復帰（例: 5秒後に待機状態へ戻す）
+  - 7セグメントディスプレイの表示更新周期
+
+【必要な変数（Section 1 に追加済みか確認）】
+  lastMillis_LED      : unsigned long // LED点滅用
+  lastMillis_Buzzer   : unsigned long // ブザー用
+  lastMillis_Measure  : unsigned long // 計測タイムアウト用
+  lastMillis_Warning  : unsigned long // 警告表示用
+  INTERVAL_LED        : const unsigned long = 500 // 例: 500ms
+  INTERVAL_BUZZER     : ... // 必要に応じて
+  INTERVAL_MEASURE    : ... // 必要に応じて
+  INTERVAL_WARNING    : ... // 必要に応じて
+
+【補足・注意点】
+  - millis()は49日でオーバーフローするが、差分計算（now - lastMillis_X）なら問題なく動作する。
+  - 各タイマーは独立して管理できるため、複数の並行処理が可能。
+  - 必要に応じてタイマー管理用の関数（例: checkTimeout(), updateLED() など）を作成し、loop()から呼び出すとよい。
 ```
 
 ---
