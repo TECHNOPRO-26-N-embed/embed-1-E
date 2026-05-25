@@ -56,12 +56,12 @@
   buttonPressStartMillis: unsigned long = 0   // 長押し開始時刻
 
 【時間定数（ms）】
-  remindInterval       : unsigned long = 1800000   // リマインド通知までの待機時間（初期値30分）
+  remindInterval       : unsigned long = 1800000       // リマインド通知までの待機時間（初期値30分）
   warningDelay         : const unsigned long = 30000   // リマインド開始後、警告状態へ移行するまでの猶予時間
-  alertRepeatInterval  : unsigned long = 30000   // 警告中にブザーを再鳴動する間隔
-  feedbackDuration     : const unsigned long = 1000   // 待機中ボタン押下時の黄色LEDフィードバック表示時間
-  debounceDelay        : const unsigned long = 50   // ボタンのチャタリングを無効化する判定時間
-  longPressThreshold   : const unsigned long = 2000   // 長押しとして扱う最小押下時間
+  alertRepeatInterval  : unsigned long = 30000         // 警告中にブザーを再鳴動する間隔
+  feedbackDuration     : const unsigned long = 1000    // 待機中ボタン押下時の黄色LEDフィードバック表示時間
+  debounceDelay        : const unsigned long = 50      // ボタンのチャタリングを無効化する判定時間
+  longPressThreshold   : const unsigned long = 2000    // 長押しとして扱う最小押下時間
 
 【入力状態】
   buttonState          : bool = false   // 現在の確定状態（押下=true）
@@ -87,24 +87,6 @@
 ---
 
 ### `setup()` — 初期化処理
-
-```
-【処理の流れ】
-1. ピンモードを設定する
-   - PIN_BUTTON  → INPUT_PULLUP
-   - PIN_LED_*   → OUTPUT
-   - PIN_BUZZER  → OUTPUT
-
-2. ライブラリの初期化（使うものだけ）
-   - 例: lcd.begin(16, 2)
-   - 例: servo.attach(PIN_SERVO)
-
-3. Serial.begin(9600)（デバッグ用）
-
-4. 起動確認（任意）: 緑LEDを1秒点灯して消灯
-```
-
-**↓ 自分の setup() を設計してください**
 
 【処理の流れ】
 ```
@@ -168,31 +150,6 @@
 
 > ※ loop() は「状態ごとに何をするか」だけ書く。細かい処理は各関数に任せる。
 
-```
-【処理の流れ】
-
-＜毎ループ実行すること＞
-  - 入力を読む（readButton(), readSensor() などを呼ぶ）
-  - 現在時刻を取得: now = millis()
-
-＜currentState が 0（待機中）のとき＞
-  - センサー値を監視する
-  - 検知条件を満たしたら → currentState = 1
-
-＜currentState が 1（動作中）のとき＞
-  - メイン処理を行う
-  - 終了条件を満たしたら → currentState = 2
-
-＜currentState が 2（完了）のとき＞
-  - 完了表示をする
-  - リセットボタンが押されたら → currentState = 0
-
-＜currentState が 3（エラー）のとき＞
-  - エラー表示をする / リセットを待つ
-```
-
-**↓ 自分の loop() を設計してください**
-
 【処理の流れ】
 ```
 ＜毎ループ実行すること＞
@@ -238,6 +195,7 @@
 ＜補足＞
   - どの状態でもボタン押下で待機状態へ戻れる構造にする
   - すべての時間判定は millis() 差分で行い、delay() は使わない
+
 ---
 
 ### （関数ごとに以下のブロックをコピーして追加してください）
@@ -447,6 +405,7 @@
 ```
 【考え方】
   「前回実行した時刻」を記録しておき、「今の時刻 − 前回時刻 ≥ 周期」なら実行する。
+  delay() を使わず、複数のタイミング判定を並行して管理できる。
 
 【処理の流れ（例: LED点滅）】
   1. now = millis()
@@ -455,7 +414,18 @@
   4. 条件を満たさない場合: 何もしない（次のループで再チェック）
 
 【自分のシステムで millis() を使う処理】
-  （basic_design.md 2-3 のタイミング設計から転記して具体化する）
+  - リマインド間隔判定（lastRemindMillis, remindInterval）
+    → 待機中に「now - lastRemindMillis >= remindInterval」でリマインド状態へ遷移
+  - 警告遷移判定（warningStartMillis, warningDelay）
+    → リマインド中に「now - warningStartMillis >= warningDelay」で警告状態へ遷移
+  - 警告中の再鳴動（lastAlertMillis, alertRepeatInterval）
+    → 警告中に「now - lastAlertMillis >= alertRepeatInterval」でブザー再鳴動
+  - ボタンデバウンス（lastButtonMillis, debounceDelay）
+    → 入力変化から「now - lastButtonMillis >= debounceDelay」で確定状態に反映
+  - フィードバックLED点滅（feedbackStartMillis, feedbackDuration）
+    → ボタン押下時「now - feedbackStartMillis < feedbackDuration」だけ黄色LED点滅
+  - 長押し判定（buttonPressStartMillis, longPressThreshold）
+    → ボタン押下継続中「now - buttonPressStartMillis >= longPressThreshold」で長押し確定
 ```
 
 ---
@@ -503,24 +473,39 @@
 |:---|:---|:---|:---|:---|:---|
 | 1 | readButton() | タクトスイッチを1回押す | true が返る | | [ ] |
 | 2 | readButton() | スイッチを素早く2回押す | 1回分だけ true になる | | [ ] |
-| 3 | readSensor() | センサーを正常範囲で使う | 仕様範囲内の値が返る | | [ ] |
-| 4 | readSensor() | センサーを遮蔽・範囲外に向ける | 誤動作しない | | [ ] |
-| 5 | （自分の関数を追加） | | | | [ ] |
+| 3 | readButton() | スイッチを長押しする | 長押し判定が1回だけ発生 | | [ ] |
+| 4 | readButton() | スイッチを押しっぱなし | 2回目以降は true にならない | | [ ] |
+| 5 | readSensor() | センサーを正常範囲で使う | 仕様範囲内の値が返る | | [ ] |
+| 6 | readSensor() | センサーを遮蔽・範囲外に向ける | 誤動作しない | | [ ] |
+| 7 | （自分の関数を追加） | | | | [ ] |
 
 ### 5-2. 出力系テスト
 
 | No | テスト対象の関数 | 入力・操作 | 期待する結果 | 実際の結果 | 合否 |
 |:---|:---|:---|:---|:---|:---|
-| 1 | updateOutput(0) | state=0（待機中）を渡す | 緑LEDが点滅する | | [ ] |
-| 2 | updateOutput(1) | state=1（動作中）を渡す | 赤LEDが点灯、ブザーが鳴る | | [ ] |
-| 3 | （自分の状態・関数を追加） | | | | [ ] |
+| 1 | updateStatusLeds(STATE_IDLE) | state=0（待機中）を渡す | 緑LEDが点灯、黄色LEDは消灯 | | [ ] |
+| 2 | updateStatusLeds(STATE_REMIND) | state=1（リマインド中）を渡す | 緑LEDが点灯、黄色LEDが点灯 | | [ ] |
+| 3 | updateStatusLeds(STATE_WARNING) | state=2（警告中）を渡す | 緑LEDが点灯、黄色LEDが点灯 | | [ ] |
+| 4 | updateStatusLeds(STATE_IDLE, isFeedbackActive=true) | フィードバック中 | 黄色LEDが点滅 | | [ ] |
+| 5 | checkWarningTimeout() | 警告遷移直後 | ブザーが2回鳴る | | [ ] |
+| 6 | checkWarningTimeout() | 警告中、alertRepeatInterval経過 | ブザーが再鳴動する | | [ ] |
+| 7 | changeAlertPattern() | パターン切替時 | LED/ブザーのパターンが切り替わる | | [ ] |
+| 8 | （自分の出力関数を追加） | | | | [ ] |
 
 ### 5-3. タイミング・並行動作テスト
+
+> ※ delay()を使わず、millis()による非ブロッキング制御や複数タイマーの並行動作が正しく機能するかを検証します。
+> 状態遷移・LED点滅・ブザー再鳴動・デバウンス・長押し判定など、全てのタイミング依存処理を網羅してください。
 
 | No | テスト内容 | テスト手順 | 期待する結果 | 実際の結果 | 合否 |
 |:---|:---|:---|:---|:---|:---|
 | 1 | delay()による処理停止がないか | LED点滅中にボタンを押す | ボタン入力が無視されない | | [ ] |
-| 2 | millis()タイマーの周期精度 | 点滅をストップウォッチで確認 | 設計した周期（例:500ms）通りに点滅 | | [ ] |
+| 2 | millis()タイマーの周期精度 | 点滅やリマインド間隔をストップウォッチで確認 | 設計した周期通りに動作 | | [ ] |
+| 3 | 複数タイマーの並行動作 | LED点滅・リマインド・警告・デバウンスを同時に発生させる | すべて正しく動作し、相互に影響しない | | [ ] |
+| 4 | デバウンス判定のタイミング精度 | 50ms未満の連打を試す | 1回分しか反応しない | | [ ] |
+| 5 | 長押し判定のタイミング精度 | 2秒未満/2秒以上で押し分ける | 2秒以上のみ長押し判定 | | [ ] |
+| 6 | フィードバックLEDの点滅時間 | ボタン押下時の点滅を計測 | 設計通りの時間だけ点滅 | | [ ] |
+| 7 | （自分のタイミング依存処理を追加） | | | | [ ] |
 
 ---
 
@@ -533,8 +518,18 @@
 > 「この詳細設計書に書いた関数と処理フローをもとに Arduino でコードを書きます。バグになりやすい箇所・処理の抜け・型の問題はありますか？」
 
 **AIの回答（要約）：**
+- millis()によるタイマー管理は正しく設計されているが、unsigned longのオーバーフロー（約50日周期）に注意が必要。
+- デバウンス処理・長押し判定は、変数の初期化・状態遷移のタイミングに注意（特に起動直後や連打時）。
+- 状態遷移（currentState）の値が定義外にならないよう、すべての分岐で安全側にフォールバックしている点は良い。
+- ボタンやLEDのピン番号・モード設定は正しいが、ハードウェア配線ミス時の動作確認も推奨。
+- 型はArduino標準型（int, unsigned long, bool等）で統一されており、問題なし。
+- 例外的な入力（remindInterval=0等）へのガードも設計されている。
 
 **対応した内容：**
+- 変数の初期化漏れや異常値ガードを全関数で明記。
+- 状態遷移の安全側フォールバックを全出力関数で実装。
+- millis()のオーバーフロー対策は、差分計算で自然に対応できる設計。
+- デバウンス・長押し判定のタイミング精度をテスト項目に追加。
 
 ---
 
@@ -543,8 +538,15 @@
 > 「Section 5 の単体テスト仕様書で、各関数の動作が正しく検証できていますか？テストが不足している項目や、境界値テストが必要な箇所を教えてください。」
 
 **AIの回答（要約）：**
+- 入力系・出力系・タイミング系すべての主要機能を網羅している。
+- デバウンス・長押し・LED/ブザー・複数タイマーの並行動作など、実装上のバグが出やすい箇所もテストされている。
+- 境界値（例：50ms未満/以上の連打、2秒未満/以上の長押し、リマインド間隔の最小値など）もテスト項目に含まれている。
+- パターン切替や異常系（未定義状態、異常値入力）もテスト項目として明記されている。
+- センサー未実装の場合は、空欄のままでも問題なし。
 
 **対応した内容：**
+- 境界値・異常系・パターン切替など、実装上のリスクが高い部分を全てテスト項目に追加。
+- テスト項目のコメント・ガイドを残し、今後の拡張やレビュー時の指針とした。
 
 ---
 
@@ -554,9 +556,9 @@
 
 | No | 指摘内容 | 指摘者 | 対応 |
 |:---|:---|:---|:---|
-| 1 |  |  |  |
-| 2 |  |  |  |
-| 3 |  |  |  |
+| 1 | 詳細設計から関数増えた? | 神谷 | 変わってない |
+| 2 | lastRemindMillisどのようなものですか? | 神谷 | 待機中からリマインドまでの時間換算用です |
+
 
 ### 7-2. レビューを受けて変更した点
 
