@@ -119,9 +119,9 @@
 | 情報の名前 | 何を表すか | 型（イメージ） | バイト数 | 初期値 | 備考 |
 |:--|:--|:--|:--|:--|:--|
 | button_start | 開始ボタンの押下 | bool | 1B | false |  |
-| led_state | LEDの動作 | bool | 1B | false |  |
-| active_state | アクティブブザーの動作 | bool | 1B | false |  |
-| start_time | 計測開始の時間 | float | 4B | 0.000 |  |
+| led_state | LEDの動作状態 | bool | 1B | false |  |
+| active_state | アクティブブザーの動作状態 | bool | 1B | false |  |
+| start_time | 計測開始の時間 | unsigned long | 4B | 0 | millis()を使用して現在の経過時間を取得 |
 | button_measuer | 計測ボタンの押下 | bool | 1B | false |  |
 | end_time | 計測ボタンを押した時間 | float | 4B | 0.000 |  |
 | total_time | 計測時間 | float | 4B | 0.000 |  |
@@ -134,7 +134,7 @@
 > [!CAUTION]
 > **SRAM使用量チェック（Arduino UNO R3 の上限は 2048B）**
 >
-> グローバル変数の合計: ＿＿25＿ B
+> グローバル変数の合計: ＿＿24＿ B
 >
 > | 合計バイト数 | 判定 |
 > |:--|:--|
@@ -199,10 +199,10 @@
 
 | 部品名 | 型番・種類 | Arduinoピン | 入力 / 出力 | 備考 |
 |:--|:--|:--|:--|:--|
-| LED(赤) | 5mm赤色LED | D2 | 出力 | 220Ω抵抗と直列 |
-| ボタン①（開始） | タクトスイッチ | D3 | 入力 | INPUT_PULLUP使用 |
-| ボタン②（計測） | タクトスイッチ | D4 | 入力 | INPUT_PULLUP使用 |
-| アクティブブザー | Active Buzzer | D12 | 出力 | 220Ω抵抗と直列 |
+| LED | 5mm赤色LED | D13 | 出力 | 220Ω抵抗と直列 |
+| ボタン①（開始） | タクトスイッチ | D2 | 入力 | INPUT_PULLUP使用 |
+| ボタン②（計測） | タクトスイッチ | D3 | 入力 | INPUT_PULLUP使用 |
+| アクティブブザー | Active Buzzer | D12 | 出力 |  |
 | パッシブブザー | Passive Buzzer | D11 | 出力 | tone()で制御 |
 | 4桁の7セグメントディスプレイ | TM1637 | D8（CLK）, D9（DIO） | 出力 | 220Ω抵抗4つ使用・直列 |
 
