@@ -22,7 +22,7 @@
 | 作品タイトル | 休憩延長防止アラーム |
 | 状態の種類（1-2 状態遷移から） | 待機中、休憩中、通知中 |
 | 実装する関数の数（2-2 関数一覧から） | 8 個 |
-| グローバル変数の合計バイト数（2-1 SRAM確認から） | 59　B |
+| グローバル変数の合計バイト数（2-1 SRAM確認から） | 63　B |
 
 ---
 
@@ -39,10 +39,10 @@
 【状態管理】（basic_design.md 1-2 の状態名から転記）
   state         : uint8_t = 0          // 0:待機中 1:休憩中 2:通知中 3:エラー
 
-【休憩時間・時刻記録】（basic_design.md 2-1 から転記）
-  duration      : uint16_t = 600       // 休憩時間（秒）
-  startTime     : uint32_t = 0         // 休憩開始時刻（Unix time）
-  endTime       : uint32_t = 0         // 休憩終了時刻（Unix time）
+【休憩時間・時刻記録】
+  duration      : uint16_t = 9*60      // 休憩時間（秒）
+  startTime     : RTCDateTime          // 休憩開始時刻（RTCDateTime型）
+  endTime       : RTCDateTime          // 休憩終了時刻（RTCDateTime型）
 
 【タイマー（millis()用）】（basic_design.md 2-3 から転記）
   breakStartMs  : unsigned long = 0    // 休憩開始時のmillis
@@ -52,13 +52,10 @@
 【ブザー制御用タイマー】
   buzzerMs      : unsigned long = 0    // ブザー開始時のmillis（1秒非同期制御用）
 
-【入力・出力状態】（basic_design.md 2-1 から転記）
-  btnStable     : bool = false         // デバウンス後の確定状態
-  btnEvent      : bool = false         // 押下イベントフラグ
+【入力・出力状態】
   buzzer        : bool = false         // ブザーON/OFF状態
 
-【ログ出力バッファ】
-  logBuf        : char[32] = ""       // "YYYY/MM/DD HH:MM:SS"
+
 
 【その他のフラグ・カウンター】
   rtcError      : bool = false         // RTC通信異常フラグ
@@ -89,7 +86,8 @@
 
 3. 変数の初期状態を設定する
   - state = 0 //待機中
-  - btnStable / btnEvent / buzzer を false にする //ボタンやブザーの状態をリセット
+  - btnStable = !digitalRead(PIN_BUTTON) で実ピン値に同期する // INPUT_PULLUPのためLOW(押下)でtrue
+  - btnEvent / buzzer を false にする // イベントとブザー状態をリセット
   - startTime / endTime / breakStartMs / btnLastMs を 0 にする //時刻やタイマー関連も0で初期化
 
 4. 起動時の確認ログを出力する（任意）
@@ -111,7 +109,7 @@
   - now（ローカル変数）= millis() を取得する // 現在時刻（ms）を取得
 
 ＜state が 0（待機中）のとき＞
-  - btnEvent が true の場合: startBreak() を呼び、state = 1（休憩中）に遷移する // ボタン押下で休憩開始
+  - btnEvent が true の場合: startBreak() を呼び、state = 1（休憩中）に遷移する // ボタン押下で休憩開始(関数を用いて)
   - それ以外は待機を継続する // 何もしない
 
 ＜state が 1（休憩中）のとき＞
@@ -121,17 +119,17 @@
 
 ＜state が 2（通知中）のとき＞
   - ブザー鳴動状態を維持する // 通知中はブザーON
-  - btnEvent が true の場合: setBuzzer(false) と endBreak() を実行し、state = 0（待機中）に遷移する // ボタン押下で通知終了
+  - btnEvent が true の場合: setBuzzer(false) と endBreak() を実行し、state = 0（待機中）に遷移する // 停止条件：ボタン押下で通知終了
 
 ＜state が 3（エラー）のとき＞
-  - エラー内容をシリアルモニタに出力し、待機中に戻す // エラー発生時の処理
+  - エラー内容をシリアルモニタに出力し、待機中に戻す // getTime()が1回でも失敗したらこの状態に遷移
 ```
 
 ---
 
 ### `readButton()` — デバウンス後のボタン押下イベントを返す
 
-**basic_design.md 2-2 との対応：** デバウンス後のボタン押下イベントを返す
+**basic_design.md 2-2 との対応：** ボタンが押された瞬間だけ true を返す。チャタリング防止のため50msのデバウンス処理を行う。
 
 **引数：** なし
 
@@ -161,10 +159,10 @@
 【処理の流れ】
 1. RTCモジュールから現在時刻を読み出す。 // RTCから時刻取得
 2. 読み出し成功時は rtcError=false にして Unix time を返す。 // 成功時はエラー解除＆時刻返す
-3. 読み出し失敗時は rtcError=true にして 0 を返す。 // 失敗時はエラーフラグON＆0返す
+3. 読み出し失敗時は rtcError=true にして state=3（エラー）へ遷移し、0 を返す。 // 1回失敗でエラー遷移
 
 【エラー・異常ケース】
-- RTC通信失敗時: エラーフラグを立て、呼び出し元で警告出力する。
+- RTC通信失敗時: 1回失敗で state=3（エラー）へ遷移し、呼び出し元で警告出力する。
 ```
 
 ---
@@ -227,7 +225,7 @@
 3. printLog("BREAK_END") を実行し、state=0（待機中）へ遷移する。
 
 【エラー・異常ケース】
-- endTime が 0 の場合: rtcError として警告ログを出力して終了処理は継続する。
+- endTime が 0 の場合: rtcError として警告ログを出力して待機中に戻す
 ```
 
 ---
@@ -285,6 +283,7 @@
 【考え方】
   休憩時間の計測やボタンのデバウンスなど、一定時間の経過判定にmillis()を利用する。
   休憩タイマーでは「休憩開始時のmillis（breakStartMs）」を記録し、「現在のmillis() - breakStartMs >= duration*1000」で休憩終了を判定する。
+  また、ブザー制御では「ブザー開始時のmillis（buzzerMs）」を記録し、「現在のmillis() - buzzerMs >= 1000」で1秒経過を判定する。
 
 【処理の流れ（例: 休憩タイマー）】
   1. 休憩開始時に breakStartMs = millis() を記録
@@ -292,30 +291,21 @@
   3. now - breakStartMs >= duration*1000 なら休憩終了（通知開始）
   4. それ以外は休憩継続
 
+【処理の流れ（例: ブザー制御）】
+  1. ブザーON時に buzzerMs = millis() を記録
+  2. 毎ループで now = millis() を取得
+  3. buzzer == true かつ now - buzzerMs >= 1000 なら setBuzzer(false) を呼び出しブザー停止
+  4. それ以外はブザー鳴動を継続
+
 【自分のシステムで millis() を使う処理】
   - 休憩時間の経過判定（breakStartMs, duration, now）
   - ボタンのデバウンス判定（btnLastMs, debounceMs, now）
+  - ブザーの1秒非同期制御（buzzerMs, now）
   - 必要に応じて他のタイミング管理にも応用可能
 ```
 
 ---
 
-### 3-3. その他の重要ロジック（任意）
-
-> **【任意】** 複雑なロジックがある場合のみ記入してください。
-> 例：「距離に応じたLED点灯パターン」「ゲームの衝突判定」「温度の閾値判定」
-
-```
-【処理の流れ】
-1.
-2.
-3.
-
-【入力値と出力値の関係】
-
-```
-
----
 
 ## 4. デバッグ出力計画（任意）
 
@@ -325,10 +315,10 @@
 
 | No | 確認したい内容 | 挿入する関数 | Serial.println の内容例 |
 |:---|:---|:---|:---|
-| 1 | センサー値が正しく取れているか | `readSensor()` | `Serial.println(sensorValue);` |
-| 2 | 状態遷移が正しく起きているか | `loop()` | `Serial.println(currentState);` |
-| 3 | チャタリング処理が効いているか | `readButton()` | `Serial.println("btn confirmed");` |
-| 4 |  |  |  |
+| 1 | ボタン押下イベントが正しく検出されているか | `readButton()` | `Serial.println("Button event detected");` |
+| 2 | 状態遷移が正しく行われているか | `loop()` | `Serial.println("State: "); Serial.println(state);` |
+| 3 | ブザーの1秒非同期制御が正しく動作しているか | `setBuzzer()` | `Serial.println("Buzzer state: ON");` または `Serial.println("Buzzer state: OFF");` |
+| 4 | RTCから時刻が正しく取得できているか | `getTime()` | `Serial.println("RTC Time: "); Serial.println(currentTime);` |
 
 ---
 
@@ -341,26 +331,33 @@
 
 | No | テスト対象の関数 | 入力・操作 | 期待する結果 | 実際の結果 | 合否 |
 |:---|:---|:---|:---|:---|:---|
-| 1 | readButton() | タクトスイッチを1回押す | true が返る | | [ ] |
-| 2 | readButton() | スイッチを素早く2回押す | 1回分だけ true になる | | [ ] |
-| 3 | readSensor() | センサーを正常範囲で使う | 仕様範囲内の値が返る | | [ ] |
-| 4 | readSensor() | センサーを遮蔽・範囲外に向ける | 誤動作しない | | [ ] |
-| 5 | （自分の関数を追加） | | | | [ ] |
+| 1 | readButton() | ボタンを1回押す | true が返る | | [ ] |
+| 2 | readButton() | ボタンを素早く2回押す | 1回分だけ true になる | | [ ] |
+| 3 | readButton() | ボタンを長押しする | true が返る（1回分のみ） | | [ ] |
+| 4 | getTime() | RTCが正常に動作している状態で現在時刻を取得 | 現在のUnix timeが返る | | [ ] |
+| 5 | getTime() | RTCが接続されていない状態で現在時刻を取得 | 0 が返る | | [ ] |
+| 6 | getTime() | RTC取得を1回失敗させる | rtcError=true になり state=3（エラー）へ遷移する | | [ ] |
 
 ### 5-2. 出力系テスト
 
 | No | テスト対象の関数 | 入力・操作 | 期待する結果 | 実際の結果 | 合否 |
 |:---|:---|:---|:---|:---|:---|
-| 1 | updateOutput(0) | state=0（待機中）を渡す | 緑LEDが点滅する | | [ ] |
-| 2 | updateOutput(1) | state=1（動作中）を渡す | 赤LEDが点灯、ブザーが鳴る | | [ ] |
-| 3 | （自分の状態・関数を追加） | | | | [ ] |
+| 1 | setBuzzer(true) | ブザーをONにする | ブザーが鳴動し始める | | [ ] |
+| 2 | setBuzzer(false) | ブザーをOFFにする | ブザーが停止する | | [ ] |
+| 3 | printLog("BREAK_START") | 休憩開始時のログを出力 | シリアルモニタに"BREAK_START"と時刻が出力される | | [ ] |
+| 4 | printLog("BREAK_END") | 休憩終了時のログを出力 | シリアルモニタに"BREAK_END"と時刻が出力される | | [ ] |
+| 5 | printLog() | 開始/終了ログの時刻文字列を確認する | YYYY/MM/DD HH:MM:SS 形式で出力される | | [ ] |
+| 6 | printLog() | エラー発生直後にログを出力する | 警告メッセージと状態（state）が出力される | | [ ] |
 
 ### 5-3. タイミング・並行動作テスト
 
 | No | テスト内容 | テスト手順 | 期待する結果 | 実際の結果 | 合否 |
 |:---|:---|:---|:---|:---|:---|
-| 1 | delay()による処理停止がないか | LED点滅中にボタンを押す | ボタン入力が無視されない | | [ ] |
-| 2 | millis()タイマーの周期精度 | 点滅をストップウォッチで確認 | 設計した周期（例:500ms）通りに点滅 | | [ ] |
+| 1 | 休憩開始時の1秒ブザー制御 | startBreak() 実行後、1秒経過を確認する | 約1秒後に setBuzzer(false) が実行されブザー停止 | | [ ] |
+| 2 | 通知中の停止条件（ボタン） | state=2（通知中）でボタンを押す | setBuzzer(false) と endBreak() が実行され state=0 へ戻る | | [ ] |
+| 3 | 休憩タイマー境界（-1ms） | breakStartMs から duration*1000-1ms 時点を確認 | state=1（休憩中）のまま | | [ ] |
+| 4 | 休憩タイマー境界（ちょうど） | breakStartMs から duration*1000ms 時点を確認 | state=2（通知中）へ遷移し通知開始 | | [ ] |
+| 5 | millis()タイマーの精度 | 休憩時間を計測し、ストップウォッチで確認 | 設定した休憩時間通りに動作する | | [ ] |
 
 ---
 
@@ -373,18 +370,32 @@
 > 「この詳細設計書に書いた関数と処理フローをもとに Arduino でコードを書きます。バグになりやすい箇所・処理の抜け・型の問題はありますか？」
 
 **AIの回答（要約）：**
+- 休憩満了時の通知ブザーが自動停止しない設計になっている
+-  INPUT_PULLUPでは未押下=HIGHですが、btnStable初期値がfalse（実装上LOW相当）だと、初回読取時に状態変化と誤解して押下エッジ判定が乱れるリスクがあります。
+- getTime失敗時の復帰動作が関数間で不整合
+- 状態遷移の責務が二重化している
+- エラー状態の入口が明確でない
 
 **対応した内容：**
-
----
+- loopのstate2に「押下で停止」を停止条件を追加
+- setupで1回 !digitalRead
+- endTime = 0の時も待機中に戻すように修正
+- 関数のみとする
+- 1回失敗で state=3
 
 ### Q2: 単体テスト仕様の確認
 
 > 「Section 5 の単体テスト仕様書で、各関数の動作が正しく検証できていますか？テストが不足している項目や、境界値テストが必要な箇所を教えてください。」
 
 **AIの回答（要約）：**
+- 主要機能のテストはあるが、getTime失敗時の state=3 遷移確認が不足。
+- デバウンスの境界値（49/50/51ms）と休憩タイマーの境界値（duration*1000-1ms / ちょうど）を追加すべき。
+- setup直後の誤押下イベント防止、printLogの時刻フォーマット確認も必要。
 
 **対応した内容：**
+- 5-1 に setup初期同期テスト、getTime失敗時の state=3 遷移テスト、デバウンス境界値テストを追加。
+- 5-2 に printLogの時刻フォーマット確認テストを追加。
+- 5-3 に休憩タイマー境界値テストと通知中停止条件テストを追加。
 
 ---
 
@@ -398,9 +409,9 @@
 
 ### 7-2. レビューを受けて変更した点
 
--
--
+- エラー処理を追加
+- コメントで日本語で説明を加えた
 
 ---
 
-*初版: YYYY-MM-DD / AIレビュー: YYYY-MM-DD / グループレビュー後更新: YYYY-MM-DD*
+*初版: 2026-05-25 / AIレビュー: 2026-05-26 / グループレビュー後更新: 2026-05-25*
