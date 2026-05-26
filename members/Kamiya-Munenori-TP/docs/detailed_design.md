@@ -39,10 +39,10 @@
 【状態管理】（basic_design.md 1-2 の状態名から転記）
   state         : uint8_t = 0          // 0:待機中 1:休憩中 2:通知中 3:エラー
 
-【休憩時間・時刻記録】（basic_design.md 2-1 から転記）
-  duration      : uint16_t = 600       // 休憩時間（秒）
-  startTime     : uint32_t = 0         // 休憩開始時刻（Unix time）
-  endTime       : uint32_t = 0         // 休憩終了時刻（Unix time）
+【休憩時間・時刻記録】
+  duration      : uint16_t = 9*60      // 休憩時間（秒）
+  startTime     : RTCDateTime          // 休憩開始時刻（RTCDateTime型）
+  endTime       : RTCDateTime          // 休憩終了時刻（RTCDateTime型）
 
 【タイマー（millis()用）】（basic_design.md 2-3 から転記）
   breakStartMs  : unsigned long = 0    // 休憩開始時のmillis
@@ -52,13 +52,10 @@
 【ブザー制御用タイマー】
   buzzerMs      : unsigned long = 0    // ブザー開始時のmillis（1秒非同期制御用）
 
-【入力・出力状態】（basic_design.md 2-1 から転記）
-  btnStable     : bool = false         // デバウンス後の確定状態（初期値。setupで実ピン値に同期して上書き）
-  btnEvent      : bool = false         // 押下イベントフラグ
+【入力・出力状態】
   buzzer        : bool = false         // ブザーON/OFF状態
 
-【ログ出力バッファ】
-  logBuf        : char[32] = ""       // "YYYY/MM/DD HH:MM:SS"
+
 
 【その他のフラグ・カウンター】
   rtcError      : bool = false         // RTC通信異常フラグ
@@ -132,7 +129,7 @@
 
 ### `readButton()` — デバウンス後のボタン押下イベントを返す
 
-**basic_design.md 2-2 との対応：** デバウンス後のボタン押下イベントを返す
+**basic_design.md 2-2 との対応：** ボタンが押された瞬間だけ true を返す。チャタリング防止のため50msのデバウンス処理を行う。
 
 **引数：** なし
 
