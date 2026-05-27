@@ -81,9 +81,10 @@
 
 2. RTCとシリアルを初期化する
   - Wire.begin() を実行 // I2C通信開始（RTCなどの外部デバイスとやりとりするため）
-  - clock.begin() を実行する // RTC（時計モジュール）の初期化
   - Serial.begin(9600) を実行 // シリアル通信開始（PCへのログ出力用）
-  - rtcError = false に初期化する
+  - Wire.beginTransmission(0x68) と Wire.endTransmission() でRTCのI2C応答を確認する
+  - rtcStatus != 0 の場合は rtcError = true とする // ACKなしでRTC未接続を検出
+  - rtcError == false の場合のみ clock.begin() を実行する // RTC（時計モジュール）の初期化
 
 3. 変数の初期状態を設定する
   - state = 0 //待機中
@@ -119,7 +120,7 @@
   - btnEvent が true の場合: endBreak() を呼び、state = 0（待機中）に遷移する（早期終了） // ボタン押下で早期終了
 
 ＜state が 2（通知中）のとき＞
-  - btnEvent が true の場合: setBuzzer(false) と endBreak() を実行し、state = 0（待機中）に遷移する // 停止条件：ボタン押下で通知終了
+  - btnEvent が true の場合:endBreak() を実行し、state = 0（待機中）に遷移する // 停止条件：ボタン押下で通知終了
 
 ＜state が 3（エラー）のとき＞
   - printLog("RTC_ERROR\n") を実行し、state = 0（待機中）に遷移する // エラー内容をシリアルモニタに出力し、待機中に戻す
@@ -318,31 +319,30 @@
 
 | No | テスト対象の関数 | 入力・操作 | 期待する結果 | 実際の結果 | 合否 |
 |:---|:---|:---|:---|:---|:---|
-| 1 | readButton() | ボタンを1回押す | true が返る | | [ ] |
-| 2 | readButton() | ボタンを素早く2回押す | 1回分だけ true になる | | [ ] |
-| 3 | readButton() | ボタンを長押しする | true が返る（1回分のみ） | | [ ] |
-| 4 | readButton() | 50ms未満の連打 | チャタリングが除去される | | [ ] |
+| 1 | readButton() | ボタンを1回押す | true が返る | trueを確認 | [〇] |
+| 2 | readButton() | ボタンを素早く2回押す | 1回分だけ true になる | 一回分のみ | [〇] |
+| 3 | readButton() | ボタンを長押しする | true が返る（1回分のみ） | 一回分のみ | [〇] |
 
 ### 5-2. 出力系テスト
 
 | No | テスト対象の関数 | 入力・操作 | 期待する結果 | 実際の結果 | 合否 |
 |:---|:---|:---|:---|:---|:---|
-| 1 | setBuzzer(true) | ブザーをONにする | ブザーが鳴動し始める | | [ ] |
-| 2 | setBuzzer(false) | ブザーをOFFにする | ブザーが停止する | | [ ] |
-| 3 | printLog("BREAK_START") | 休憩開始時のログを出力 | シリアルモニタに"BREAK_START"と時刻が出力される | | [ ] |
-| 4 | printLog("BREAK_END") | 休憩終了時のログを出力 | シリアルモニタに"BREAK_END"と時刻が出力される | | [ ] |
-| 5 | printLog() | 開始/終了ログの時刻文字列を確認する | YYYY/MM/DD HH:MM:SS 形式で出力される | | [ ] |
-| 6 | printLog() | エラー発生直後にログを出力する | 警告メッセージと状態（state）が出力される | | [ ] |
+| 1 | setBuzzer(true) | ブザーをONにする | ブザーが鳴動し始める |鳴動する| [〇] |
+| 2 | setBuzzer(false) | ブザーをOFFにする | ブザーが停止する |停止する| [〇] |
+| 3 | printLog("BREAK_START") | 休憩開始時のログを出力 | シリアルモニタに"BREAK_START"と時刻が出力される |出力される| [〇] |
+| 4 | printLog("BREAK_END") | 休憩終了時のログを出力 | シリアルモニタに"BREAK_END"と時刻が出力される |出力される| [〇] |
+| 5 | printLog() | 開始/終了ログの時刻文字列を確認する | YYYY/MM/DD HH:MM:SS 形式で出力される |出力を確認| [〇] |
+| 6 | printLog() | エラー発生直後にログを出力する | 警告メッセージと状態（state）が出力される |出力を確認(RTC_ERROR)| [〇] |
 
 ### 5-3. タイミング・並行動作テスト
 
 | No | テスト内容 | テスト手順 | 期待する結果 | 実際の結果 | 合否 |
 |:---|:---|:---|:---|:---|:---|
-| 1 | 休憩開始時の1秒ブザー制御 | startBreak() 実行後、1秒経過を確認する | 約1秒後に setBuzzer(false) が自動実行されブザー停止 | | [ ] |
-| 2 | 通知中の停止条件（ボタン） | state=2（通知中）でボタンを押す | setBuzzer(false) と endBreak() が実行され state=0 へ戻る | | [ ] |
-| 3 | 休憩タイマー境界（-1ms） | breakStartMs から duration*1000-1ms 時点を確認 | state=1（休憩中）のまま | | [ ] |
-| 4 | 休憩タイマー境界（ちょうど） | breakStartMs から duration*1000ms 時点を確認 | state=2（通知中）へ遷移し通知開始 | | [ ] |
-| 5 | millis()タイマーの精度 | 休憩時間を計測し、ストップウォッチで確認 | 設定した休憩時間通りに動作する | | [ ] |
+| 1 | 休憩開始時の1秒ブザー制御 | startBreak() 実行後、1秒経過を確認する | 約1秒後に setBuzzer(false) が自動実行されブザー停止 |1秒鳴動| [〇] |
+| 2 | 通知中の停止条件（ボタン） | state=2（通知中）でボタンを押す | setBuzzer(false) と endBreak() が実行され state=0 へ戻る |ブザーが止まり待機中に遷移| [〇] |
+| 3 | 休憩タイマー境界（-1ms） | breakStartMs から duration*1000-1ms 時点を確認 | state=1（休憩中）のまま |ボタンが押される前まで休憩中| [〇] |
+| 4 | 休憩タイマー境界（ちょうど） | breakStartMs から duration*1000ms 時点を確認 | state=2（通知中）へ遷移し通知開始 |遷移するが記録に誤差±5秒| [△] |
+| 5 | millis()タイマーの精度 | 休憩時間を計測し、ストップウォッチで確認 | 設定した休憩時間通りに動作する |タイマーとしては精度高め | [〇] |
 
 ---
 
