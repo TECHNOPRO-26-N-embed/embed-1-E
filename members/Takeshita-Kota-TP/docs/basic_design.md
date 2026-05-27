@@ -127,15 +127,23 @@
 | total_time | 計測時間 | float | 4B | 0.000 |  |
 | suc_fail | 0.433秒以内に押したかどうかの判定 | int | 2B | 0 |  |
 | passive_state | 成功か失敗を示すパッシブブザーの状態 | void | 1B | 0 |  |
+<<<<<<< HEAD
 | nums | 4桁の7セグメントディスプレイに表示する値 | nums[4] | 8B | 0 |  |
 | table | 表示する数字コード一覧 | unsigned char | 1B |  |  |
+=======
+| display_time | 4桁の7セグメントディスプレイに表示する秒数 | unsgined char[4](unsgined float) | 4B | 0 |  |
+>>>>>>> 35da06984db26ea8bc874f5ac0bd3c609bf12c06
 | debounceDelay | ボタンのデバウンス時間（ms） | const unsigned int | 2B | 50 | チャタリング対策 |
 |  |  |  |  |  |  |
 
 > [!CAUTION]
 > **SRAM使用量チェック（Arduino UNO R3 の上限は 2048B）**
 >
+<<<<<<< HEAD
 > グローバル変数の合計: ＿＿30＿ B
+=======
+> グローバル変数の合計: ＿＿24＿ B
+>>>>>>> 35da06984db26ea8bc874f5ac0bd3c609bf12c06
 >
 > | 合計バイト数 | 判定 |
 > |:--|:--|
@@ -160,14 +168,22 @@
 | — | （共通）待機・制御 | `loop()` | 状態に応じて各関数を呼び出すメインループ | なし | なし | 常時 |
 | — | （共通）ボタン読出 | `readButton()` | チャタリング処理済みのボタン状態を返す | なし | bool | loop()内 |
 | — | ランダム値の均一化を防ぐ | `randomSeed(analogRead(0))` | ランダムで値を生成する際に値が固定されるのを防ぐ | なし | なし | setup()内 |
+<<<<<<< HEAD
 | F01 | ランダムな待機時間生成 | `random_number()` | ランダムな値生成 | int | int | led_active_state()内 |
+=======
+| F01 | ランダムな待機時間生成 | `random(0,10000)` | なし | なし | int | loop()内 |
+>>>>>>> 35da06984db26ea8bc874f5ac0bd3c609bf12c06
 | F02 | 開始ボタン動作(必須機能⑥) | `button_start()` | 開始ボタンを押す | int bool | bool | loop()内 |
 | F03 | LEDとアクティブブザーの同時動作 | `led_active_state()` | ledとアクティブブザーの同時動作 | trueかfalse | bool | loop()内 |
 | F04 | 計測ボタン動作 | `button_measure()` | 計測ボタンを押す | なし | long | loop()内 |
 | F05 | 計測結果の計算・判定 | `suc_fail()` | 計測結果を計算し、成功か失敗の判定を行う | なし | int | loop()内 |
 | F06 | パッシブブザー動作 | `passive_state()` | パッシブブザーで成功・失敗音が鳴る | int result | void | loop()内 |
+<<<<<<< HEAD
 | F07 | 計測結果表示 | `seg_47()` | 4桁の7セグメントディスプレイに結果表示 | unsigend long total_time, int after | void | loop()内 |
 | F08 | 1桁あたりの点灯 | `Display()` | 4桁の7セグメントディスプレイの1桁あたりの表示方法 | unsigend char num, bool dot | void | seg_47()内 |
+=======
+| F07 | 計測結果表示 | `seg_47()` | 4桁の7セグメントディスプレイに結果表示 | int time | void | loop()内 |
+>>>>>>> 35da06984db26ea8bc874f5ac0bd3c609bf12c06
 
 
 > [!CAUTION]
@@ -206,8 +222,12 @@
 | ボタン②（計測） | タクトスイッチ | D3 | 入力 | INPUT_PULLUP使用 |
 | アクティブブザー | Active Buzzer | D12 | 出力 |  |
 | パッシブブザー | Passive Buzzer | D11 | 出力 | tone()で制御 |
+<<<<<<< HEAD
 | 4桁の7セグメントディスプレイ | TM1637 | D4, D5, D6, D7 | 出力 | 220Ω抵抗4つ使用・直列 |
 | レジスタ | 74HC595 | D8（DS）, D9（STCP）, D10（SHCP）| 入力 | 4桁の7セグメントディスプレイ制御 |
+=======
+| 4桁の7セグメントディスプレイ | TM1637 | D8（CLK）, D9（DIO） | 出力 | 220Ω抵抗4つ使用・直列 |
+>>>>>>> 35da06984db26ea8bc874f5ac0bd3c609bf12c06
 
 > [!CAUTION]
 > **ピン競合チェック（必須）**
@@ -223,6 +243,10 @@
 
 | 用途 | 判断・計算メモ |
 |:--|:--|
+| LED電流制限抵抗 | （例）(5V − 2.0V) ÷ 0.02A = 150Ω → 220Ω使用 |
+| ボタンのプルアップ | INPUT_PULLUP使用 / 外付け10kΩ / 不要（理由：） |
+| センサーの動作電圧 | （データシートで確認した結果） |
+
 ---
 
 ## 4. 異常系・エラー処理の方針
