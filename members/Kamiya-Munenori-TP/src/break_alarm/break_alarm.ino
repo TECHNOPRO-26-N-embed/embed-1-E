@@ -6,14 +6,8 @@
 const uint8_t PIN_BUTTON = 2;   // ボタン入力ピン
 const uint8_t PIN_BUZZER = 12;  // ブザー出力ピン
 
-// 状態定義
-const uint8_t STATE_IDLE = 0;    // 待機中
-const uint8_t STATE_BREAK = 1;   // 休憩中
-const uint8_t STATE_NOTIFY = 2;  // 通知中
-const uint8_t STATE_ERROR = 3;   // エラー状態
-
 // 時間と状態管理用変数
-uint8_t state = STATE_IDLE;           // 現在の状態
+uint8_t state;           // 現在の遷移状態
 uint16_t duration = 9 * 60;           // 休憩時間（秒）
 RTCDateTime startTime;                // 休憩開始時刻
 RTCDateTime endTime;                  // 休憩終了時刻
@@ -55,7 +49,7 @@ void setup() {
   // clock.setDateTime(__DATE__, __TIME__);  // 必要時のみRTC時刻を設定
 
   // 初期状態の設定
-  state = STATE_IDLE;  // 初期状態を待機中に設定
+  state = 0;  // 初期状態を待機中:0に設定
   buzzer = false;
   breakStartMs = 0;
   btnLastMs = 0;
@@ -81,39 +75,36 @@ void loop() {
 
   // 現在の状態に応じた処理を実行
   switch (state) {
-    case STATE_IDLE:
-      // 待機中の処理
+    case 0:  // 待機中
       if (btnEvent) {
-        startBreak();
+        startBreak();  // ボタンが押されたら休憩開始処理を呼び出す
       }
       break;
 
-    case STATE_BREAK:
-      // 休憩中の処理
+    case 1:  // 休憩中
       if ((nowMs - breakStartMs) >= (unsigned long)duration * 1000UL) {
-        setBuzzer(true);
-        state = STATE_NOTIFY;
+        setBuzzer(true);  // 休憩時間が経過したらブザーをONにする
+        state = 2;  // 通知中に遷移
       } else if (btnEvent) {
-        endBreak();
+        endBreak();  // 休憩中にボタンが押されたら休憩終了処理を呼び出す
       }
       break;
 
-    case STATE_NOTIFY:
-      // 通知中の処理
+    case 2:  // 通知中
       if (btnEvent) {
-        setBuzzer(false);
-        endBreak();
+        setBuzzer(false);  // 通知中にボタンが押されたらブザーをOFFにする
+        endBreak();  // 休憩終了処理を呼び出す
       }
       break;
 
-    case STATE_ERROR:
+    case 3:  // エラー状態
       // エラー状態の処理
       printLog("RTC_ERROR\n");
-      state = STATE_IDLE;
+      state = 0;  // 待機中に遷移
       break;
 
     default:
-      state = STATE_IDLE;
+      state = 0;  // 待機中に遷移
       break;
   }
 }
@@ -152,24 +143,24 @@ void setBuzzer(bool on) {  // ブザーのON/OFFを制御する関数
 void startBreak() {                 // 休憩開始処理
   startTime = clock.getDateTime();  // RTCから現在時刻を取得
   if (startTime.year < 2000) {      // RTC未設定などの簡易判定
-    state = STATE_ERROR;
+    state = 3;  // エラー状態に遷移
     return;
   }
   setBuzzer(true);  // 休憩開始時にブザーをONにする
   breakStartMs = millis();
   printLog("BREAK_START");
-  state = STATE_BREAK;
+  state = 1;  // 休憩中に遷移
 }
 
 void endBreak() {                 // 休憩終了処理
   endTime = clock.getDateTime();  // RTCから現在時刻を取得
   setBuzzer(false);               // 休憩終了時にブザーをOFFにする
   if (endTime.year < 2000) {      // RTC未設定などの簡易判定
-    state = STATE_ERROR;
+    state = 3;  // エラー状態に遷移
     return;
   }
   printLog("BREAK_END");
-  state = STATE_IDLE;
+  state = 0;  // 待機中に遷移
 }
 
 void printLog(const char *msg) {
@@ -201,14 +192,12 @@ void printLog(const char *msg) {
     Serial.print(endTime.minute);
     Serial.print(":");
     Serial.print(endTime.second);
-    if (state == STATE_BREAK) {
+    if (state == 1) {  // 休憩中
       Serial.println(" (早期終了)\n");
     } else {
       Serial.println("\n");
     }
   } else {
     Serial.print(msg);
-    Serial.print(" | state=");
-    Serial.println(state);
   }
 }
