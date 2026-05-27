@@ -33,13 +33,13 @@
 > ここで設計した変数は、この後の関数設計でそのまま使います。
 
 ```
-【ピン定義】（basic_design.md 3-1 から転記）
+【ピン定義】
   PIN_BUTTON      : const int = 2    // タクトスイッチ（INPUT_PULLUP）
   PIN_LED_GREEN   : const int = 9    // 緑LED（電源ON表示）
   PIN_LED_YELLOW  : const int = 10   // 黄色LED（リマインド/警告/フィードバック表示）
   PIN_BUZZER      : const int = 12   // アクティブブザー
 
-【状態管理】（basic_design.md 1-2 の状態名から転記）
+【状態管理】
   currentState  : int = 0   // 0:待機中 1:リマインド中 2:警告中
 
 【状態ID定数】
@@ -47,21 +47,25 @@
   STATE_REMIND    : const int = 1
   STATE_WARNING   : const int = 2
 
-【タイマー（millis()用）】（basic_design.md 2-3 から転記）
-  lastRemindMillis      : unsigned long = 0   // 最後にリマインド時刻を更新した時刻
-  warningStartMillis    : unsigned long = 0   // リマインド開始時刻（30秒経過判定基準）
-  lastAlertMillis       : unsigned long = 0   // 最後にブザーを鳴らした時刻
-  lastButtonMillis      : unsigned long = 0   // デバウンス確定時刻
-  feedbackStartMillis   : unsigned long = 0   // 黄色LEDフィードバック開始時刻
-  buttonPressStartMillis: unsigned long = 0   // 長押し開始時刻
+【タイマー（millis()用）】
+  lastRemindMillis        : unsigned long = 0   // 最後にリマインド時刻を更新した時刻
+  warningStartMillis      : unsigned long = 0   // リマインド開始時刻（30秒経過判定基準）
+  lastAlertMillis         : unsigned long = 0   // 最後にブザーを鳴らした時刻
+  lastButtonMillis        : unsigned long = 0   // デバウンス確定時刻
+  feedbackStartMillis     : unsigned long = 0   // 黄色LEDフィードバック開始時刻
+  buttonPressStartMillis  : unsigned long = 0   // 長押し開始時刻
+  lastFeedbackBlinkMillis : unsigned long = 0   // 黄色LED点滅の反転時刻
 
 【時間定数（ms）】
-  remindInterval       : unsigned long = 1800000       // リマインド通知までの待機時間（初期値30分）
-  warningDelay         : const unsigned long = 30000   // リマインド開始後、警告状態へ移行するまでの猶予時間
-  alertRepeatInterval  : unsigned long = 30000         // 警告中にブザーを再鳴動する間隔
-  feedbackDuration     : const unsigned long = 1000    // 待機中ボタン押下時の黄色LEDフィードバック表示時間
-  debounceDelay        : const unsigned long = 50      // ボタンのチャタリングを無効化する判定時間
-  longPressThreshold   : const unsigned long = 2000    // 長押しとして扱う最小押下時間
+  remindInterval          : unsigned long = 1800000       // リマインド通知までの待機時間（初期値30分、テスト時は10000）
+  warningDelay            : const unsigned long = 30000   // リマインド開始後、警告状態へ移行するまでの猶予時間
+  alertRepeatInterval     : unsigned long = 30000         // 警告中にブザーを再鳴動する間隔
+  feedbackDuration        : const unsigned long = 1000    // 待機中ボタン押下時の黄色LEDフィードバック表示時間
+  debounceDelay           : const unsigned long = 50      // ボタンのチャタリングを無効化する判定時間
+  longPressThreshold      : const unsigned long = 2000    // 長押しとして扱う最小押下時間
+  feedbackBlinkInterval   : const unsigned long = 250     // 黄色LED点滅の反転間隔
+  buzzerOnDuration        : const unsigned long = 120     // ブザー1回の鳴動時間
+  buzzerGapDuration       : const unsigned long = 120     // 2回鳴動の間隔
 
 【入力状態】
   buttonState          : bool = false   // 現在の確定状態（押下=true）
@@ -69,12 +73,13 @@
   isLongPressHandled   : bool = false   // 同一長押しの重複処理防止
 
 【フィードバック・通知状態】
-  isFeedbackActive     : bool = false   // 待機中ボタン押下の黄色LED点滅中か
-  currentPattern       : int = 0        // 通知パターン番号（0:標準）
-  intervalModeIndex    : int = 0        // 0:30分 1:45分 2:60分
+  isFeedbackActive        : bool = false   // 待機中ボタン押下の黄色LED点滅中か
+  currentPattern          : int = 0        // 通知パターン番号（0:標準）
+  intervalModeIndex       : int = 0        // 0:30分 1:45分 2:60分
+  feedbackLedOn           : bool = false   // 黄色LED点滅のON/OFF状態
 
 【その他のフラグ・カウンター】
-  buzzerPulseCount     : int = 0        // 開始時2回鳴動の回数管理
+  buzzerPulseCount        : int = 0        // ブザー鳴動の回数管理
 ```
 
 ---
@@ -273,7 +278,7 @@
 
 ---
 
-### `checkWarningTimeout()` — リマインド中30秒無反応で警告遷移し、再鳴動を管理する
+### `checkWarningTimeout()` — リマインド中30秒無反応で警告遷移し、2回鳴動・再鳴動を管理する
 
 **basic_design.md 2-2 との対応：** F03 必須：30秒無反応でブザー警告
 
@@ -284,17 +289,25 @@
 ```
 【処理の流れ】
 1. currentState が STATE_REMIND の場合
-  - now - warningStartMillis >= warningDelay を判定する
-  - 成立時は currentState = STATE_WARNING に遷移する
-  - 遷移直後にブザーを2回鳴らし、buzzerPulseCount=2、lastAlertMillis=now を設定する
+  - now - warningStartMillis >= warningDelay を判定
+  - 成立時は currentState = STATE_WARNING に遷移
+  - 警告シーケンス用 static変数（sequenceActive, buzzerOn, phaseStartMillis）を初期化
+  - buzzerPulseCount = 0
+
 2. currentState が STATE_WARNING の場合
-  - now - lastAlertMillis >= alertRepeatInterval を判定する
-  - 成立時はブザーを再鳴動し、lastAlertMillis = now を更新する
-3. それ以外の状態では何もしない
+  - buzzerPulseCount < 2 の間は
+    - buzzerOn=false なら、前回OFFからbuzzerGapDuration経過でON
+    - buzzerOn=true なら、buzzerOnDuration経過でOFF＋buzzerPulseCount++
+    - 2回鳴動後はsequenceActive=false, lastAlertMillis=now
+  - buzzerPulseCount >= 2 かつ alertRepeatInterval経過で
+    - sequenceActive=true, buzzerPulseCount=0 で2回鳴動シーケンス再開
+
+3. それ以外の状態では
+  - sequenceActive, buzzerOnをfalse、ブザーOFF
 
 【エラー・異常ケース】
-- ブザー出力が異常な場合: ピン出力を LOW に戻し、次周期で再判定する
-- warningStartMillis 未初期化の場合: now を代入して判定基準を再同期する
+- ブザー出力が異常な場合: ピン出力を LOW に戻し、次周期で再判定
+- warningStartMillis 未初期化の場合: now を代入して判定基準を再同期
 ```
 
 ---
@@ -373,7 +386,8 @@
 
 ## 3. 重要ロジックの詳細設計
 
-### 3-1. チャタリング防止（デバウンス処理）
+
+### 3-1. チャタリング防止（デバウンス処理・LED点滅・2回鳴動シーケンス管理の補足）
 
 > ※ ボタンを使う場合は必ず設計してください。
 
@@ -396,6 +410,13 @@
   debounceDelay    : const unsigned long   // チャタリング判定時間（50ms）
   prevButtonReading: bool                  // 前回の生入力状態
   buttonState      : bool                  // デバウンス後の確定状態
+  lastFeedbackBlinkMillis : unsigned long  // 黄色LED点滅の反転時刻
+  feedbackBlinkInterval   : const unsigned long // 黄色LED点滅の反転間隔
+  feedbackLedOn           : bool           // 黄色LED点滅のON/OFF状態
+  buzzerPulseCount        : int            // ブザー鳴動の回数管理
+  buzzerOnDuration        : const unsigned long // ブザー1回の鳴動時間
+  buzzerGapDuration       : const unsigned long // 2回鳴動の間隔
+  （checkWarningTimeout()内static変数: sequenceActive, buzzerOn, phaseStartMillis）
 ```
 
 ---
