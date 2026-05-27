@@ -22,7 +22,7 @@
 | 作品タイトル | 反応速度計測マシーン |
 | 状態の種類（1-2 状態遷移から） | 待機、計測、結果表示、 |
 | 実装する関数の数（2-2 関数一覧から） | 8個 |
-| グローバル変数の合計バイト数（2-1 SRAM確認から） | 24B |
+| グローバル変数の合計バイト数（2-1 SRAM確認から） | 29B |
 
 ---
 
@@ -38,19 +38,30 @@
   PIN_BUZZER_ACTIVE    = 12   // アクティブブザー
   PIN_BUTTON_2 = 3   // タクトスイッチ（INPUT_PULLUP）
   PIN_BUZZER_PASSIVE    = 11   // パッシブブザー
-  PIN_7SEG    = 8（CLK）, 9（DIO）   // 4桁の7セグメントディスプレイ
+  letch    = 8（DS）   // 4桁の7セグメントディスプレイ
+  clock    = 9（STCP）   // 4桁の7セグメントディスプレイ
+  data    = 10（SHCP）   // 4桁の7セグメントディスプレイ\
+  digitPins[4] = {4,5,6,7}    // 各桁の制御ピン
 
 【状態管理】（basic_design.md 1-2 の状態名から転記）
-  currentState : int = 0   // 0:待機(待機中) 1:動作中(計測中) 2:完了(結果表示) 3:エラー(警告)
-  // 状態遷移: 0(待機) -> 1(動作中) -> 2(完了) -> 0(待機)
-  // 例外遷移: フライング/異常値/タイムアウト時は 3(エラー) -> 0(待機)
+  // currentState を持たずに、処理位置と判定結果で状態を管理する。
+  isMeasuring   : bool = false   // false:待機 / true:計測中
+  result_number : int = -1       // -1:未判定 0:失敗 1:成功 2:エラー(タイムオーバー)
+  // 実質の遷移: 待機 -> 計測中 -> 結果表示 -> 待機
+  // 例外: 計測中にTIMEOUT_MS超過で待機へ戻る
 
 
 【タイマー（millis()用）】（basic_design.md 2-3 から転記）
-  led_active_millis : unsigned long = 0
-  measure_millis : unsigned long = 0
-  passive_millis : unsigned long = 0
-  seg47_millis : unsigned long = 0
+  start_time              : unsigned long = 0   // LED+アクティブブザーON時刻
+  measure_time            : unsigned long = 0   // 計測ループ内の現在時刻
+  end_time                : unsigned long = 0   // 計測ボタン押下時刻
+  total_time              : unsigned long = 0   // 反応時間（end_time - start_time）
+  keika_time              : unsigned long = 0   // 計測開始からの経過時間
+  lastChangeTime_start    : unsigned long = 0   // 開始ボタンのデバウンス用
+  lastChangeTime_measure  : unsigned long = 0   // 計測ボタンのデバウンス用
+  DEBOUNCE_MS             : const unsigned long = 50
+  SIGNAL_ON_MS            : const unsigned long = 100
+  TIMEOUT_MS              : const unsigned long = 20000
 
 
 【センサー・入力値】（basic_design.md 2-1 から転記）
@@ -63,8 +74,8 @@
   total_time : unsigned long
   suc_fail : int = 0,1,2  // 0:失敗 1:成功 2:エラー
   passive_state : void  // true:鳴動 false:停止
-
-  display_time : float = 0.000
+  nums[3] : int  // total_timeの各桁の数字が配列として格納される
+  table[] : unsigned char  //7セグメントディスプレイに表示する値
   debounceDelay　: const unsgined long
 
 【その他のフラグ・カウンター】
@@ -256,17 +267,35 @@
 
 **basic_design.md 2-2 との対応：** 4桁の7セグメントディスプレイに結果を表示
 
-**引数：** `int time`
+**引数：** `unsigned long total_time, int aftet`
 
 **戻り値：** void型
 
 ```
 【処理の流れ】
-1. total_timeを4桁の7セグメントディスプレイに表示する
+1. 結果に応じてtotal_timeを4桁の7セグメントディスプレイに表示する
+2. 10000ms以上の場合は----と表示
 
 【エラー・異常ケース】
 - 結果が10000ms(10.000秒)以上の時:
   ・----と表示
+```
+---
+### `Display()` — 1桁分の点灯
+
+**basic_design.md 2-2 との対応：** 4桁7セグの1桁あたりの表示方法(ダイナミック方式)
+
+**引数：** `unsigned long total_time, int aftet`
+
+**戻り値：** void型
+
+```
+【処理の流れ】
+1. 74HC595への出力をストップ
+2. table[nums]から対応した表示パターンを取得
+3. 対象の部分のDP(小数点部分)を点灯させる
+4. 74HC595への出力を行う
+
 ```
 ---
 
@@ -282,25 +311,25 @@
   複数ボタンがある場合は、それぞれ独立してデバウンス処理を行う。
 
 【処理の流れ】
-  1. 各ボタンのデジタル値を読む（digitalRead）
-  2. ボタンの状態が前回と異なれば、lastDebounceTimeXを更新（Xはボタンごと）
-  3. 前回確定した時刻（lastDebounceTimeX）からの経過時間を計算する
-  4. 経過時間 < DEBOUNCE_DELAY（例: 50ms）の場合は無視する
-  5. 経過時間 ≥ DEBOUNCE_DELAY かつ状態が変化した場合のみ「押下」と判定
-  6. lastDebounceTimeX を更新する
+  1. ボタン入力を `digitalRead()` で取得し、`readingX`（今回値）として扱う。
+  2. `readingX` と `lastReadingX` が異なる場合、チャタリング中の可能性があるため `lastChangeTimeX = millis()` に更新し、`lastReadingX = readingX` にする。
+  3. `millis() - lastChangeTimeX >= DEBOUNCE_MS`（50ms）になるまで確定判定を行わず待つ。
+  4. 50ms経過後、`stableStateX`（確定状態）と `readingX` が異なる場合のみ状態変化として確定する。
+  5. 確定後に `stableStateX = readingX` とし、`stableStateX == LOW`（押下）なら「1回押された」と判定して true を返す。
+  6. 上記条件を満たさない場合は false を返し、次のループで再判定する（開始ボタン・計測ボタンそれぞれ独立して同じ処理を持つ）。
 
 【必要な変数（Section 1 に追加済みか確認）】
-  lastDebounceTime1 : unsigned long   // ボタン①用
-  lastDebounceTime2 : unsigned long   // ボタン②用
-  buttonState1      : bool            // ボタン①の現在の状態
-  lastButtonState1  : bool            // ボタン①の前回の状態
-  buttonState2      : bool            // ボタン②の現在の状態
-  lastButtonState2  : bool            // ボタン②の前回の状態
-  DEBOUNCE_DELAY    : const int = 50  // チャタリング判定時間（ms）
+  stableState_start     : int = HIGH            // 開始ボタンの確定状態
+  lastReading_start     : int = HIGH            // 開始ボタンの前回読取値
+  lastChangeTime_start  : unsigned long = 0     // 開始ボタンの変化時刻
+  stableState_measure   : int = HIGH            // 計測ボタンの確定状態
+  lastReading_measure   : int = HIGH            // 計測ボタンの前回読取値
+  lastChangeTime_measure: unsigned long = 0     // 計測ボタンの変化時刻
+  DEBOUNCE_MS           : const unsigned long = 50  // チャタリング判定時間（ms）
 
 【補足】
   - 状態遷移（loop内）で「押下イベント」として使う場合は、デバウンス済みの値を参照すること。
-  - 必要に応じて関数化（例：readButton(pin)）し、どのボタンにも使えるようにする。
+  - 本コードではbutton_start()とbutton_measure()で、それぞれ独立したデバウンス状態として管理する。
 ```
 
 ---
@@ -309,36 +338,42 @@
 
 ```
 【考え方】
-  delay()を使うとその間すべての処理が止まるため、millis()を使って「非停止型」のタイマー管理を行う。
-  複数のタイマー（LED点滅、ブザー制御、計測タイムアウト、警告表示など）を同時に管理できる。
+  1 ボタン入力のデバウンス（50ms）
+  2 LED+アクティブブザーをONにした時刻の記録（start_time）
+  3 計測中の経過時間監視（タイムアウト判定）
+  ※ 本実装は delay() も併用しているため、完全な非停止型ではない。
 
-【処理の流れ（例: LED点滅・複数タイマー）】
-  1. now = millis() で現在時刻を取得
-  2. 各タイマーごとに「now - lastMillis_X >= INTERVAL_X」か判定（Xは用途ごと）
-  3. 条件を満たした場合のみ、対応する処理（LEDのON/OFF切替、ブザー鳴動、状態遷移など）を実行し、lastMillis_X = now で更新
-  4. 条件を満たさない場合は何もしない（次ループで再チェック）
+【処理の流れ】
+  1. 開始ボタン確定後、led_active_state() でランダム待機後にLEDとアクティブブザーをONにする。
+  2. ONにした瞬間を start_time = millis() で記録する。
+  3. while (millis() - start_time < 100) で100ms経過を待ち、LEDとアクティブブザーをOFFにする。
+  4. loop() 側で measure_time = millis() を取得し、keika_time = measure_time - start_time を毎ループ計算する。
+  5. 計測ボタン押下が確定したら、end_time = millis() を取得して total_time = end_time - start_time を算出する。
+  6. keika_time >= 20000 になった場合はタイムアウトとして待機へ戻る。
 
 【自分のシステムで millis() を使う処理例】
-  - LED点滅周期管理（例: 500msごとにON/OFF）
-  - アクティブブザーの鳴動時間管理
-  - 計測開始からのタイムアウト判定（例: 10秒経過で自動リセット）
-  - 警告表示後の自動復帰（例: 5秒後に待機状態へ戻す）
-  - 7セグメントディスプレイの表示更新周期
+  - 開始ボタン/計測ボタンのデバウンス判定（50ms）
+  - 反応計測の開始時刻記録（start_time）
+  - 計測ボタン押下時刻記録（end_time）
+  - 計測中の経過時間監視（keika_time）
+  - タイムアウト判定（20000ms）
 
 【必要な変数（Section 1 に追加済みか確認）】
-  lastMillis_LED      : unsigned long // LED点滅用
-  lastMillis_Buzzer   : unsigned long // ブザー用
-  lastMillis_Measure  : unsigned long // 計測タイムアウト用
-  lastMillis_Warning  : unsigned long // 警告表示用
-  INTERVAL_LED        : const unsigned long = 500 // 例: 500ms
-  INTERVAL_BUZZER     : ... // 必要に応じて
-  INTERVAL_MEASURE    : ... // 必要に応じて
-  INTERVAL_WARNING    : ... // 必要に応じて
+  start_time              : unsigned long   // LED+アクティブブザーON時刻
+  end_time                : unsigned long   // 計測ボタン押下時刻
+  total_time              : unsigned long   // 反応時間（end_time - start_time）
+  measure_time            : unsigned long   // 計測ループ内の現在時刻
+  keika_time              : unsigned long   // 計測開始からの経過時間
+  lastChangeTime_start    : unsigned long   // 開始ボタンのデバウンス用
+  lastChangeTime_measure  : unsigned long   // 計測ボタンのデバウンス用
+  DEBOUNCE_MS             : const unsigned long = 50
+  SIGNAL_ON_MS            : const unsigned long = 100
+  TIMEOUT_MS              : const unsigned long = 20000
 
 【補足・注意点】
-  - millis()は49日でオーバーフローするが、差分計算（now - lastMillis_X）なら問題なく動作する。
-  - 各タイマーは独立して管理できるため、複数の並行処理が可能。
-  - 必要に応じてタイマー管理用の関数（例: checkTimeout(), updateLED() など）を作成し、loop()から呼び出すとよい。
+  - millis() は差分計算（現在時刻 - 記録時刻）で判定しているため、オーバーフロー時も基本的に安全に動作する。
+  - コメントでは「30秒以内」とあるが、実装値は 20000ms（20秒）になっている。仕様値をどちらかに統一する。
+  - delay() を使っている箇所（ランダム待機・効果音）はその間ほかの処理が止まるため、必要なら millis() 管理へ置換する。
 ```
 
 ---
