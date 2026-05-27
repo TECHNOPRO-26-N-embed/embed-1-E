@@ -137,18 +137,25 @@
 |:--|:--|:--|:--|:--|:--|
 | currentState | 現在の状態（0:待機 1:リマインド 2:警告） | int | 2B | 0 | 状態管理用 |
 | lastRemindMillis | 最後にリマインドした時刻（ms） | unsigned long | 4B | 0 | millis()で管理 |
-| remindInterval | リマインド間隔（ms） | unsigned long | 4B | 1800000 | 30分=1800000ms |
+| remindInterval | リマインド間隔（ms） | unsigned long | 4B | 1800000 | 30分=1800000ms（テスト時は10000） |
 | greenLedPin | 緑LEDの接続ピン番号 | const int | 2B | 9 | 待機中表示用 |
 | yellowLedPin | 黄色LEDの接続ピン番号 | const int | 2B | 10 | リマインド/フィードバック用 |
 | buzzerPin | ブザーの接続ピン番号 | const int | 2B | 12 | 例：D12 |
 | buttonPin | ボタンの接続ピン番号 | const int | 2B | 2 | 例：D2 |
 | buttonState | ボタンの現在の状態 | bool | 1B | false | チャタリング対策後 |
+| prevButtonReading | ボタンの前回読取値 | bool | 1B | false | デバウンス用 |
 | lastButtonMillis | 最後にボタンを押した時刻（ms） | unsigned long | 4B | 0 | デバウンス用 |
 | warningStartMillis | 警告状態に入った時刻（ms） | unsigned long | 4B | 0 | 30秒経過判定用 |
 | lastAlertMillis | 最後にブザーを鳴らした時刻（ms） | unsigned long | 4B | 0 | 再鳴動間隔の判定用 |
 | alertRepeatInterval | 警告中の再鳴動間隔（ms） | unsigned long | 4B | 30000 | 30秒ごとに再鳴動 |
 | feedbackStartMillis | 待機中ボタン押下フィードバックの開始時刻（ms） | unsigned long | 4B | 0 | 黄色LED点滅制御用 |
 | feedbackDuration | フィードバック表示時間（ms） | unsigned long | 4B | 1000 | 1秒間点滅 |
+| lastFeedbackBlinkMillis | 黄色LED点滅の反転時刻 | unsigned long | 4B | 0 | LED点滅制御用 |
+| feedbackBlinkInterval | 黄色LED点滅の反転間隔 | unsigned long | 4B | 250 | LED点滅制御用 |
+| feedbackLedOn | 黄色LED点滅のON/OFF状態 | bool | 1B | false | LED点滅制御用 |
+| buzzerPulseCount | ブザー鳴動の回数管理 | int | 2B | 0 | 2回鳴動・再鳴動管理 |
+| buzzerOnDuration | ブザー1回の鳴動時間 | unsigned long | 4B | 120 | 2回鳴動制御用 |
+| buzzerGapDuration | 2回鳴動の間隔 | unsigned long | 4B | 120 | 2回鳴動制御用 |
 
 > [!CAUTION]
 > **SRAM使用量チェック（Arduino UNO R3 の上限は 2048B）**
@@ -179,7 +186,7 @@
 | C01 | （共通）ボタン読出 | `readButton()` | チャタリング処理済みのボタン押下を判定する | なし | bool | loop()内 |
 | F01 | 必須：一定時間ごとにLEDで促す | `checkRemindTimer()` | リマインド間隔の経過判定を行い、状態を遷移させる | なし | なし | loop()内 |
 | F02 | 必須：LEDでリマインド状態を表示 | `updateStatusLeds()` | 状態に応じて緑/黄色LED（電源ON中は緑常時点灯、待機:黄消灯、リマインド/警告:黄点灯、待機ボタン押下:黄点滅）を制御する | int state | なし | loop()内 |
-| F03 | 必須：30秒無反応でブザー警告 | `checkWarningTimeout()` | リマインド開始から30秒経過時に警告状態へ遷移し、黄色LED点灯を維持したまま開始時2回鳴動＋一定間隔で再鳴動を制御する | なし | なし | loop()内 |
+| F03 | 必須：30秒無反応でブザー警告 | `checkWarningTimeout()` | リマインド開始から30秒経過時に警告状態へ遷移し、黄色LED点灯を維持したまま「2回鳴動＋一定間隔ごとに毎回2回鳴動」をnon-blockingで制御する | なし | なし | loop()内 |
 | F04 | 必須：ボタンでリセット | `resetByButton()` | ボタン押下時に警告解除・タイマー初期化・待機状態へ戻して黄色LEDを消灯し、待機中押下時は1秒以内に黄色LED点滅のフィードバックを返す | bool pressed | なし | loop()内 |
 | A01 | 追加：リマインド間隔変更 | `changeRemindInterval()` | ボタン長押しで間隔（例:30/45/60分）を切り替える | bool longPress | なし | loop()内 |
 | A02 | 追加：LED/ブザーパターン切替 | `changeAlertPattern()` | 通知パターン番号を切り替えて出力に反映する（開始時鳴動と再鳴動の両方を切替） | bool longPress | なし | loop()内 |
@@ -198,7 +205,7 @@
 | LED表示（電源ON中） | 緑LEDは常時点灯 | **millis** | 電源ON状態の視覚表示を常に維持しながら他処理を並行するため |
 | リマインド開始判定 | 30分（1800000ms） | **millis** | 長時間待機中も他処理を止めないため |
 | 警告開始判定（無反応） | 30秒（30000ms） | **millis** | リマインド中の入力監視を継続するため |
-| 警告中の再鳴動 | 30秒（30000ms）ごと | **millis** | 開始時2回鳴動後も非ブロッキングで再通知するため |
+| 警告中の再鳴動 | 30秒（30000ms）ごと | **millis** | 開始時2回鳴動＋以降も毎回2回鳴動をnon-blockingで再通知するため |
 | ボタンデバウンス判定 | 50ms | **millis** | チャタリングを除去しつつ応答性を保つため |
 | 待機中ボタン押下の黄色LED点滅 | 1秒（1000ms） | **millis** | タイマーリセット時の視覚フィードバックを返すため |
 
