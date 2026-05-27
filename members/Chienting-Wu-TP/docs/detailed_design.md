@@ -255,25 +255,25 @@
 
 ---
 
-### `updateStatusLeds(int state)` — 状態に応じて緑/黄色LED表示を更新する
+### `updateStatusLeds()` — 状態に応じて緑/黄色LED表示を更新する
 
 **basic_design.md 2-2 との対応：** F02 必須：LEDでリマインド状態を表示
 
-**引数：** state（int）: 現在状態（STATE_IDLE / STATE_REMIND / STATE_WARNING）
+**引数：** なし（グローバル変数 currentState を参照）
 
 **戻り値：** なし（void）
 
 ```
 【処理の流れ】
 1. 緑LEDは電源ON中のため常時 HIGH にする
-2. state が STATE_IDLE の場合
-  - isFeedbackActive が true なら黄色LEDを点滅させる
+2. currentState が STATE_IDLE の場合
+  - isFeedbackActive が true なら黄色LEDを点滅させる（feedbackLedOn, lastFeedbackBlinkMillis, feedbackBlinkInterval を利用）
   - それ以外は黄色LEDを LOW にする
-3. state が STATE_REMIND または STATE_WARNING の場合、黄色LEDを HIGH にする
+3. currentState が STATE_REMIND または STATE_WARNING の場合、黄色LEDを HIGH にする
 4. それ以外の未定義状態は安全側として黄色LEDを LOW にする
 
 【エラー・異常ケース】
-- state が未定義値の場合: 待機表示（黄色LED OFF）にフォールバックする
+- 状態が未定義値の場合: 待機表示（黄色LED OFF）にフォールバックする
 ```
 
 ---
