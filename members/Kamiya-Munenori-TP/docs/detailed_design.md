@@ -20,9 +20,9 @@
 | 項目 | basic_design.md から転記 |
 |:--|:--|
 | 作品タイトル | 休憩延長防止アラーム |
-| 状態の種類（1-2 状態遷移から） | 待機中、休憩中、通知中 |
-| 実装する関数の数（2-2 関数一覧から） | 8 個 |
-| グローバル変数の合計バイト数（2-1 SRAM確認から） | 63　B |
+| 状態の種類（1-2 状態遷移から） | 待機中、休憩中、通知中、エラー |
+| 実装する関数の数（2-2 関数一覧から） | 7 個 |
+| グローバル変数の合計バイト数（2-1 SRAM確認から） | 69　B |
 
 ---
 
@@ -81,14 +81,14 @@
 
 2. RTCとシリアルを初期化する
   - Wire.begin() を実行 // I2C通信開始（RTCなどの外部デバイスとやりとりするため）
-  - RTC.begin() を実行し、失敗時は rtcError = true にする // RTC（時計モジュール）の初期化。失敗時はエラーフラグON
+  - clock.begin() を実行する // RTC（時計モジュール）の初期化
   - Serial.begin(9600) を実行 // シリアル通信開始（PCへのログ出力用）
+  - rtcError = false に初期化する
 
 3. 変数の初期状態を設定する
   - state = 0 //待機中
-  - btnStable = !digitalRead(PIN_BUTTON) で実ピン値に同期する // INPUT_PULLUPのためLOW(押下)でtrue
-  - btnEvent / buzzer を false にする // イベントとブザー状態をリセット
-  - startTime / endTime / breakStartMs / btnLastMs を 0 にする //時刻やタイマー関連も0で初期化
+  - buzzer を false にする // ブザー状態をリセット
+  - breakStartMs / btnLastMs / buzzerMs を 0 にする // タイマー関連を初期化
 
 4. 起動時の確認ログを出力する（任意）
   - rtcError が false の場合: "System ready" を出力
@@ -106,7 +106,8 @@
 
 ＜毎ループ実行すること＞
   - btnEvent = readButton() を実行する  // ボタンが押されたか判定
-  - now（ローカル変数）= millis() を取得する // 現在時刻（ms）を取得
+  - nowMs（ローカル変数）= millis() を取得する // 現在時刻（ms）を取得
+  - 休憩中（state==1）でブザーが鳴動中かつ1秒経過した場合、setBuzzer(false) で自動停止する //休憩開始時に1秒ブザーを鳴動させる
 
 ＜state が 0（待機中）のとき＞
   - btnEvent が true の場合: startBreak() を呼び、state = 1（休憩中）に遷移する // ボタン押下で休憩開始(関数を用いて)
@@ -118,11 +119,10 @@
   - btnEvent が true の場合: endBreak() を呼び、state = 0（待機中）に遷移する（早期終了） // ボタン押下で早期終了
 
 ＜state が 2（通知中）のとき＞
-  - ブザー鳴動状態を維持する // 通知中はブザーON
   - btnEvent が true の場合: setBuzzer(false) と endBreak() を実行し、state = 0（待機中）に遷移する // 停止条件：ボタン押下で通知終了
 
 ＜state が 3（エラー）のとき＞
-  - エラー内容をシリアルモニタに出力し、待機中に戻す // getTime()が1回でも失敗したらこの状態に遷移
+  - printLog("RTC_ERROR\n") を実行し、state = 0（待機中）に遷移する // エラー内容をシリアルモニタに出力し、待機中に戻す
 ```
 
 ---
@@ -137,32 +137,14 @@
 
 ```
 【処理の流れ】
-1. PIN_BUTTON を読む // ボタンの状態を取得
-2. 前回から十分時間が経っていれば btnStable を更新 // チャタリング防止
-3. 押された瞬間だけ btnEvent=true を返す // 押下エッジのみ
+1. rawPressed = !digitalRead(PIN_BUTTON) で現在の押下状態（押下=true）を取得する。 // INPUT_PULLUPなのでLOWを押下として扱う
+2. lastRawPressed（static）と値が変わったら、btnLastMs = millis() を記録し、lastRawPressed を更新する。 // 生入力の変化時刻を記録
+3. millis() - btnLastMs >= debounceMs (前回入力から十分時間が経つ)かつ rawPressed != btnStable(状態が本当に変わった) のとき、btnStable（static）を更新する。 // 一定時間同じ状態なら確定
+4. btnStable が true（押下確定）になった瞬間だけ true を返す。 // 押下イベントを1回だけ返す
+5. それ以外は false を返す。 // 未押下またはチャタリング中はイベントなし
 
 【エラー・異常ケース】
 - ボタン値が不安定な場合: チャタリングとして無視し false を返す。
-```
-
----
-
-### `getTime()` — RTCから現在時刻（Unix time）を取得する
-
-**basic_design.md 2-2 との対応：** RTCから現在時刻（Unix time）を取得
-
-**引数：** なし
-
-**戻り値：** `uint32_t`（現在時刻。失敗時は0）
-
-```
-【処理の流れ】
-1. RTCモジュールから現在時刻を読み出す。 // RTCから時刻取得
-2. 読み出し成功時は rtcError=false にして Unix time を返す。 // 成功時はエラー解除＆時刻返す
-3. 読み出し失敗時は rtcError=true にして state=3（エラー）へ遷移し、0 を返す。 // 1回失敗でエラー遷移
-
-【エラー・異常ケース】
-- RTC通信失敗時: 1回失敗で state=3（エラー）へ遷移し、呼び出し元で警告出力する。
 ```
 
 ---
@@ -198,14 +180,14 @@
 
 ```
 【処理の流れ】
-1. startTime = getTime() で開始時刻を取得する。
-2. setBuzzer(true) を呼び、buzzerMs = millis() でブザー開始時刻を記録 // 休憩開始を1秒ブザーで通知
-3. 以降のloop()で「buzzer==true かつ millis()-buzzerMs>=1000」になったら setBuzzer(false) で自動停止（非同期1秒制御）
+1. startTime = clock.getDateTime() でRTCから直接開始時刻を取得する。
+2. startTime.year < 2000 の場合は state=3（エラー）へ遷移し、関数を終了する。
+3. setBuzzer(true) を呼び、休憩開始通知を行う（buzzerMs は setBuzzer 内で記録される）。
 4. breakStartMs = millis() を保存し、休憩タイマーの基準時刻にする。
 5. printLog("BREAK_START") を実行し、state=1（休憩中）へ遷移する。
 
 【エラー・異常ケース】
-- startTime が 0 の場合: rtcError として警告ログを出し、必要なら待機中に戻す。
+- startTime.year < 2000 の場合: RTC未設定などの異常とみなし、state=3（エラー）へ遷移する。
 ```
 
 ---
@@ -220,12 +202,13 @@
 
 ```
 【処理の流れ】
-1. endTime = getTime() で終了時刻を取得する。
-2. setBuzzer(false) を呼び、通知中なら鳴動を停止する。
-3. printLog("BREAK_END") を実行し、state=0（待機中）へ遷移する。
+1. endTime = clock.getDateTime() でRTCから直接終了時刻を取得する。
+2. endTime.year < 2000 の場合は state=3（エラー）へ遷移し、関数を終了する。
+3. setBuzzer(false) を呼び、通知中であればブザーを停止する。
+4. printLog("BREAK_END") を実行し、state=0（待機中）へ遷移する。
 
 【エラー・異常ケース】
-- endTime が 0 の場合: rtcError として警告ログを出力して待機中に戻す
+- endTime.year < 2000 の場合: RTC未設定などの異常とみなし、state=3（エラー）へ遷移する。
 ```
 
 ---
@@ -240,12 +223,16 @@
 
 ```
 【処理の流れ】
-1. startTime または endTime を "YYYY/MM/DD HH:MM:SS" 形式に整形して logBuf に格納する。
-2. msg と logBuf を組み合わせて Serial に出力する。
-3. 出力後、必要ならデバッグ用に state も併記する。
+1. msg が "BREAK_START" の場合:
+   - startTime を "YYYY/MM/DD HH:MM:SS" 形式で出力する。
+2. msg が "BREAK_END" の場合:
+   - endTime を "YYYY/MM/DD HH:MM:SS" 形式で出力する。
+   - state が 1（休憩中）の場合は "(早期終了)" を追加で出力する。
+3. その他の msg の場合:
+   - msg をそのまま出力する。
 
 【エラー・異常ケース】
-- シリアル出力失敗時: 再送を試み、失敗が続く場合は警告メッセージに切り替える。
+- シリアル出力失敗時: 再送を試みる処理は実装されていないため、特に考慮しない。
 ```
 
 ---
