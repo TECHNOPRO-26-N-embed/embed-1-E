@@ -83,7 +83,7 @@ unsigned long lastFeedbackBlinkMillis = 0;  // 点滅を最後に反転した時
 
 //フィードバック・通知状態
 bool isFeedbackActive = false;    // 待機中ボタン押下の黄色LED点滅中か
-int currentPattern    = 0;        // 通知パターン番号（0:標準）
+int currentPattern    = 0;        // 通知パターン番号（0:標準）　※任意
 int intervalModeIndex = 0;        // 0:30分 1:45分 2:60分　※任意
 
 bool feedbackLedOn    = false;    // 点滅中のON/OFF状態
@@ -253,6 +253,18 @@ void checkWarningTimeout(){
     phaseStartMillis = now;
     digitalWrite(PIN_BUZZER, LOW);
   }
+
+}
+
+
+//長押しでリマインド間隔を切り替える（任意実装関数）
+void changeRemindInterval(bool longPress){
+
+}
+
+
+//長押しでLED/ブザーパターンを切り替える（任意実装関数）
+void changeAlertPattern(bool longPress){
 
 }
 //--------------------------------------------------------------
