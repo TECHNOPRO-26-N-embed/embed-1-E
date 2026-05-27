@@ -38,6 +38,7 @@ void setup(){
   }
   Serial.begin(9600);
 }
+
 void loop(){
   static unsigned long last_total_time = 0;
   // 開始ボタンが押されたら新しい計測を開始
